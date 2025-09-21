@@ -23,7 +23,7 @@ fn cli() -> Command {
 }
 
 fn main() {
-    let mut disk_map = store::DiskMap::new();
+    let mut disk_map = store::DiskMap::new().unwrap();
     let matches = cli().get_matches();
 
     match matches.subcommand() {

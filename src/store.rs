@@ -27,12 +27,15 @@ impl DiskMap {
     fn read_data(fd: OwnedFd) -> Result<String, Box<dyn std::error::Error>> {
         let mut buf = [0u8; 1024];
         let mut s = String::new();
-        let mut n = unistd::read(&fd, &mut buf)?;
 
-        while n != 0 {
+        loop {
+            let n = unistd::read(&fd, &mut buf)?;
+            if n == 0 {
+                break;
+            }
+
             let chunk = str::from_utf8(&buf[..n]).expect("Valid UTF-8");
             s.push_str(chunk);
-            n = unistd::read(&fd, &mut buf)?;
         }
         Ok(s)
     }

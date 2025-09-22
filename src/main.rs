@@ -3,27 +3,28 @@ mod store;
 use clap::{Command, arg};
 
 fn cli() -> Command {
-    Command::new("git")
-        .about("A fictional key-value store")
+    Command::new("diskmap")
+        .about("A disk key-value store")
         .subcommand_required(true)
         .arg_required_else_help(true)
         .subcommand(
             Command::new("set")
                 .about("sets a value in the key-value store")
-                .arg(arg!(-k --key <KEY> "The key of your new entry"))
-                .arg(arg!(-v --value <VALUE> "The value of your new entry"))
+                .arg(arg!(key: <KEY> "The key of your new entry"))
+                .arg(arg!(value: <VALUE> "The value of your new entry"))
                 .arg_required_else_help(true),
         )
         .subcommand(
             Command::new("get")
                 .about("get a value from the key-value store")
-                .arg(arg!(-k --key <KEY> "The key to query the key-value store"))
+                .arg(arg!(key: <KEY> "The key to query the key-value store"))
                 .arg_required_else_help(true),
         )
+        .subcommand(Command::new("dump").about("print key-value store"))
 }
 
 fn main() {
-    let mut disk_map = store::DiskMap::new().unwrap();
+    let mut disk_map = store::DiskMap::new("/tmp/map").unwrap();
     let matches = cli().get_matches();
 
     match matches.subcommand() {
@@ -40,8 +41,17 @@ fn main() {
         }
         Some(("get", sub_matches)) => {
             let key = sub_matches.get_one::<String>("key").expect("required");
-            disk_map.get(key);
+            if let Some(value) = disk_map.get(key) {
+                println!("{}", value);
+            } else {
+                println!("No value found for {}", key);
+            }
+        }
+        Some(("dump", _)) => {
+            println!("{:#?}", disk_map.m);
         }
         _ => unreachable!(),
     }
+
+    disk_map.write().unwrap();
 }

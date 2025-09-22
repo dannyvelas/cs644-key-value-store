@@ -1,5 +1,5 @@
 [package]
-name = "cs644-key-value-server"
+name = "diskmap"
 version = "0.1.0"
 edition = "2024"
 

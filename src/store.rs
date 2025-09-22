@@ -32,7 +32,7 @@ impl DiskMap {
 
     fn read_data(fd: OwnedFd) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let mut buf = [0u8; 1024];
-        let mut v: Vec<u8> = vec![];
+        let mut v: Vec<u8> = Vec::new();
 
         loop {
             let n = unistd::read(&fd, &mut buf)?;

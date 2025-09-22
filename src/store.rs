@@ -58,7 +58,7 @@ impl DiskMap {
         // open and truncate file
         let fd = fcntl::open(
             self.file_path.as_str(),
-            OFlag::O_WRONLY | OFlag::O_CREAT,
+            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
             Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH,
         )?;
 

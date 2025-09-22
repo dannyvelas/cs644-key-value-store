@@ -37,7 +37,7 @@ fn main() {
                 .get_one::<String>("value")
                 .expect("required")
                 .as_str();
-            disk_map.set(k, v);
+            disk_map.set(k, v).unwrap();
         }
         Some(("get", sub_matches)) => {
             let key = sub_matches.get_one::<String>("key").expect("required");
@@ -52,6 +52,4 @@ fn main() {
         }
         _ => unreachable!(),
     }
-
-    disk_map.write().unwrap();
 }

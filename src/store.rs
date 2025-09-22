@@ -50,7 +50,7 @@ impl DiskMap {
         Ok(v)
     }
 
-    pub fn write(self) -> Result<usize, Box<dyn Error>> {
+    fn write(&self) -> Result<usize, Box<dyn Error>> {
         // serialize hashmap
         let mut s = flexbuffers::FlexbufferSerializer::new();
         self.m.serialize(&mut s)?;
@@ -68,8 +68,9 @@ impl DiskMap {
         Ok(n)
     }
 
-    pub fn set(&mut self, k: &str, v: &str) {
+    pub fn set(&mut self, k: &str, v: &str) -> Result<usize, Box<dyn Error>> {
         self.m.insert(k.to_string(), v.to_string());
+        self.write()
     }
 
     pub fn get(&self, k: &str) -> Option<&String> {

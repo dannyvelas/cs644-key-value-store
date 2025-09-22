@@ -1,3 +1,5 @@
+extern crate flexbuffers;
+
 use nix::fcntl;
 use nix::fcntl::OFlag;
 use nix::sys::stat::Mode;
@@ -5,7 +7,7 @@ use nix::unistd;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, os::fd::OwnedFd};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct DiskMap {
     pub m: HashMap<String, String>,
 }
@@ -19,14 +21,18 @@ impl DiskMap {
         )?;
 
         let data = DiskMap::read_data(fd)?;
-        println!("{}.", data);
-
-        Ok(DiskMap { m: HashMap::new() })
+        if data.is_empty() {
+            Ok(DiskMap { m: HashMap::new() })
+        } else {
+            let reader = flexbuffers::Reader::get_root(&data[..])?;
+            let disk_map = DiskMap::deserialize(reader)?;
+            Ok(disk_map)
+        }
     }
 
-    fn read_data(fd: OwnedFd) -> Result<String, Box<dyn std::error::Error>> {
+    fn read_data(fd: OwnedFd) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let mut buf = [0u8; 1024];
-        let mut s = String::new();
+        let mut v: Vec<u8> = vec![];
 
         loop {
             let n = unistd::read(&fd, &mut buf)?;
@@ -34,10 +40,9 @@ impl DiskMap {
                 break;
             }
 
-            let chunk = str::from_utf8(&buf[..n]).expect("Valid UTF-8");
-            s.push_str(chunk);
+            v.extend_from_slice(&buf[..n]);
         }
-        Ok(s)
+        Ok(v)
     }
 
     pub fn set(&mut self, k: &str, v: &str) {

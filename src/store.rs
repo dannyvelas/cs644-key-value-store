@@ -18,7 +18,7 @@ impl DiskMap {
     pub fn new(file_path: &str) -> Result<DiskMap, Box<dyn Error>> {
         let fd = fcntl::open(
             file_path,
-            OFlag::O_RDONLY | OFlag::O_CREAT,
+            OFlag::O_RDWR | OFlag::O_CREAT,
             Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH,
         )?;
 

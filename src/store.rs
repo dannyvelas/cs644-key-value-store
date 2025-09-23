@@ -7,6 +7,8 @@ use nix::unistd::{self};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::os::fd::AsFd;
+use std::thread;
+use std::time;
 use std::{collections::HashMap, os::fd::OwnedFd};
 
 pub struct DiskMap {
@@ -58,6 +60,8 @@ impl DiskMap {
 
         // acquire exclusive lock
         let lock = fcntl::Flock::lock(self.fd, FlockArg::LockExclusive).map_err(|(_, e)| e)?;
+
+        thread::sleep(time::Duration::from_secs(10));
 
         // self.truncate file
         unistd::ftruncate(lock.as_fd(), 0)?;

@@ -3,7 +3,7 @@ extern crate flexbuffers;
 use nix::fcntl::OFlag;
 use nix::fcntl::{self, FlockArg};
 use nix::sys::stat::Mode;
-use nix::unistd::{self};
+use nix::unistd;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::os::fd::AsFd;
@@ -14,6 +14,7 @@ use std::{collections::HashMap, os::fd::OwnedFd};
 pub struct DiskMap {
     pub m: HashMap<String, String>,
     fd: OwnedFd,
+    file_path: String,
 }
 
 impl DiskMap {
@@ -32,10 +33,14 @@ impl DiskMap {
             HashMap::deserialize(reader)?
         };
 
-        Ok(DiskMap { m, fd: new_fd })
+        Ok(DiskMap {
+            m,
+            fd: new_fd,
+            file_path: String::from(file_path),
+        })
     }
 
-    fn read(fd: OwnedFd) -> Result<(OwnedFd, Vec<u8>), Box<dyn std::error::Error>> {
+    fn read(fd: OwnedFd) -> Result<(OwnedFd, Vec<u8>), Box<dyn Error>> {
         let mut buf = [0u8; 1024];
         let mut v: Vec<u8> = Vec::new();
 
@@ -83,5 +88,27 @@ impl DiskMap {
 
     pub fn get(&self, k: &str) -> Option<&String> {
         self.m.get(k)
+    }
+
+    pub fn size(&self) -> Result<(), Box<dyn Error>> {
+        match unsafe { unistd::fork() } {
+            Ok(unistd::ForkResult::Parent { child, .. }) => {
+                match nix::sys::wait::waitpid(child, None) {
+                    Ok(_) => Ok(()),
+                    Err(err) => Err(format!("error waiting: {}", err).into()),
+                }
+            }
+            Ok(unistd::ForkResult::Child) => {
+                let path = std::ffi::CString::new("/usr/bin/wc")?;
+                let arg1 = std::ffi::CString::new("-c")?;
+                let arg2 = std::ffi::CString::new(self.file_path.clone())?;
+                let argv = [&path, &arg1, &arg2];
+                match nix::unistd::execv(&path, &argv) {
+                    Ok(_) => unreachable!(), // execv never returns on success
+                    Err(err) => Err(format!("error calling execv: {}", err).into()),
+                }
+            }
+            Err(err_no) => Err(format!("Fork failed with code: {}", err_no).into()),
+        }
     }
 }

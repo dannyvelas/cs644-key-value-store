@@ -20,6 +20,7 @@ fn cli() -> Command {
                 .arg(arg!(key: <KEY> "The key to query the key-value store"))
                 .arg_required_else_help(true),
         )
+        .subcommand(Command::new("size").about("get the size of the key-value store"))
         .subcommand(Command::new("dump").about("print key-value store"))
 }
 
@@ -45,6 +46,11 @@ fn main() {
                 println!("{}", value);
             } else {
                 println!("No value found for {}", key);
+            }
+        }
+        Some(("size", _)) => {
+            if let Err(e) = disk_map.size() {
+                println!("error calling size: {}", e)
             }
         }
         Some(("dump", _)) => {

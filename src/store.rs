@@ -103,12 +103,13 @@ impl DiskMap {
                 let arg1 = std::ffi::CString::new("-c")?;
                 let arg2 = std::ffi::CString::new(self.file_path.clone())?;
                 let argv = [&path, &arg1, &arg2];
-                match nix::unistd::execv(&path, &argv) {
-                    Ok(_) => unreachable!(), // execv never returns on success
-                    Err(err) => Err(format!("error calling execv: {}", err).into()),
-                }
+                let Err(err) = nix::unistd::execv(&path, &argv);
+                // if we're here, it means execv failed. if it succeeded then the code from this process would
+                // have been replaced by now
+                eprintln!("execv failed: {}", err);
+                std::process::exit(1);
             }
-            Err(err_no) => Err(format!("Fork failed with code: {}", err_no).into()),
+            Err(err_no) => Err(err_no.into()),
         }
     }
 }

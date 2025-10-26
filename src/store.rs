@@ -1,24 +1,24 @@
 extern crate flexbuffers;
 
+use flexbuffers::FlexbufferSerializer;
 use nix::fcntl::OFlag;
 use nix::fcntl::{self, FlockArg};
 use nix::sys::stat::Mode;
 use nix::unistd;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
+use std::collections::HashMap;
+use std::error;
+use std::os;
 use std::os::fd::AsFd;
-use std::thread;
-use std::time;
-use std::{collections::HashMap, os::fd::OwnedFd};
 
 pub struct DiskMap {
     pub m: HashMap<String, String>,
-    fd: OwnedFd,
+    fd: Option<os::fd::OwnedFd>,
     file_path: String,
 }
 
 impl DiskMap {
-    pub fn new(file_path: &str) -> Result<DiskMap, Box<dyn Error>> {
+    pub fn new(file_path: &str) -> Result<DiskMap, Box<dyn error::Error>> {
         let fd = fcntl::open(
             file_path,
             OFlag::O_RDWR | OFlag::O_CREAT,
@@ -35,12 +35,12 @@ impl DiskMap {
 
         Ok(DiskMap {
             m,
-            fd: new_fd,
+            fd: Some(new_fd),
             file_path: String::from(file_path),
         })
     }
 
-    fn read(fd: OwnedFd) -> Result<(OwnedFd, Vec<u8>), Box<dyn Error>> {
+    fn read(fd: os::fd::OwnedFd) -> Result<(os::fd::OwnedFd, Vec<u8>), Box<dyn error::Error>> {
         let mut buf = [0u8; 1024];
         let mut v: Vec<u8> = Vec::new();
 
@@ -58,39 +58,46 @@ impl DiskMap {
         Ok((new_fd, v))
     }
 
-    fn write(mut self) -> Result<usize, Box<dyn Error>> {
+    fn write(&mut self) -> Result<usize, Box<dyn error::Error>> {
         // serialize hashmap
         let mut s = flexbuffers::FlexbufferSerializer::new();
         self.m.serialize(&mut s)?;
 
-        // acquire exclusive lock
-        let lock = fcntl::Flock::lock(self.fd, FlockArg::LockExclusive).map_err(|(_, e)| e)?;
+        // consume and replace fd
+        let old_fd = self.fd.take().ok_or("no fd")?;
+        let new_fd = DiskMap::write_lock(old_fd, s)?;
+        self.fd = Some(new_fd);
 
-        thread::sleep(time::Duration::from_secs(10));
+        Ok(134)
+    }
+
+    fn write_lock(
+        fd: os::fd::OwnedFd,
+        s: FlexbufferSerializer,
+    ) -> Result<os::fd::OwnedFd, Box<dyn error::Error>> {
+        // acquire exclusive lock
+        let lock = fcntl::Flock::lock(fd, FlockArg::LockExclusive).map_err(|(_, e)| e)?;
 
         // self.truncate file
         unistd::ftruncate(lock.as_fd(), 0)?;
 
         // write
-        let n = unistd::write(lock.as_fd(), s.view())?;
+        let _ = unistd::write(lock.as_fd(), s.view())?;
 
         // release lock
         let new_fd = lock.unlock().map_err(|(_, e)| e)?;
-        self.fd = new_fd;
-
-        Ok(n)
+        Ok(new_fd)
     }
 
-    pub fn set(mut self, k: &str, v: &str) -> Result<usize, Box<dyn Error>> {
+    pub fn set(&mut self, k: &str, v: &str) {
         self.m.insert(k.to_string(), v.to_string());
-        self.write()
     }
 
     pub fn get(&self, k: &str) -> Option<&String> {
         self.m.get(k)
     }
 
-    pub fn size(&self) -> Result<(), Box<dyn Error>> {
+    pub fn size(&self) -> Result<(), Box<dyn error::Error>> {
         match unsafe { unistd::fork() } {
             Ok(unistd::ForkResult::Parent { child, .. }) => {
                 match nix::sys::wait::waitpid(child, None) {

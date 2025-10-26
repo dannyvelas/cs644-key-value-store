@@ -13,10 +13,6 @@ impl GetHandler {
 }
 
 impl Handler for GetHandler {
-    fn action(&self) -> String {
-        String::from("get")
-    }
-
     fn handle(&self, _in_bytes: &[u8]) -> &[u8] {
         self.temp.as_bytes()
     }

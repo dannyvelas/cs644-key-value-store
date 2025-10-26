@@ -1,32 +1,19 @@
 use nix::libc::{self, addrinfo};
-use std::{collections, error, ffi, io, ptr};
+use std::{error, ffi, io, ptr};
 
 use crate::net::types::Handler;
 
 pub struct TCPServer {
     localhost: addrinfo,
-    handlers: collections::HashMap<String, Box<dyn Handler>>,
+    handler: Box<dyn Handler>,
 }
 
 impl TCPServer {
-    pub fn new(
-        port: &str,
-        handlers: Vec<Box<dyn Handler>>,
-    ) -> Result<TCPServer, Box<dyn error::Error>> {
+    pub fn new(port: &str, handler: Box<dyn Handler>) -> Result<TCPServer, Box<dyn error::Error>> {
         Ok(TCPServer {
             localhost: TCPServer::get_localhost(port)?,
-            handlers: TCPServer::handlers_to_map(handlers),
+            handler,
         })
-    }
-
-    fn handlers_to_map(
-        handlers: Vec<Box<dyn Handler>>,
-    ) -> collections::HashMap<String, Box<dyn Handler>> {
-        let mut hm = collections::HashMap::new();
-        for handler in handlers {
-            hm.insert(handler.action().to_string(), handler);
-        }
-        hm
     }
 
     pub fn start(&self) -> Result<(), Box<dyn error::Error>> {
@@ -81,7 +68,7 @@ impl TCPServer {
                 return Err(err.into());
             }
             let bytes = &buf[..n as usize];
-            let mut out = self.dispatch_handler(bytes)?.to_owned();
+            let mut out = self.handler.handle(bytes).to_owned();
 
             if unsafe { libc::write(conn, out.as_mut_ptr().cast(), out.len() as libc::size_t) }
                 == -1
@@ -92,18 +79,6 @@ impl TCPServer {
         }
         TCPServer::close_fd(conn, None)?;
         Ok(())
-    }
-
-    fn dispatch_handler(&self, bytes: &[u8]) -> Result<&[u8], Box<dyn error::Error>> {
-        let parsed = std::str::from_utf8(bytes)?;
-        let action = parsed.split_whitespace().next().ok_or("empty body")?;
-
-        let handler = self
-            .handlers
-            .get(action)
-            .ok_or_else(|| format!("unrecognized action: {}", action))?;
-
-        Ok(handler.handle(bytes))
     }
 
     fn get_localhost(port: &str) -> Result<libc::addrinfo, Box<dyn error::Error>> {

@@ -6,9 +6,9 @@ pub struct TCPServer {
 }
 
 impl TCPServer {
-    pub fn new() -> Result<TCPServer, Box<dyn error::Error>> {
+    pub fn new(port: &str) -> Result<TCPServer, Box<dyn error::Error>> {
         Ok(TCPServer {
-            localhost: TCPServer::get_localhost()?,
+            localhost: TCPServer::get_localhost(port)?,
         })
     }
 
@@ -47,11 +47,13 @@ impl TCPServer {
                 return Err("connection was -1".into());
             }
 
-            TCPServer::handle_connection(conn)
+            if let Err(err) = TCPServer::handle_connection(conn) {
+                return Err(err.into());
+            }
         }
     }
 
-    fn handle_connection(conn: i32) {
+    fn handle_connection(conn: i32) -> Result<(), io::Error> {
         loop {
             let mut buf = [0u8; 1024];
             let n = unsafe { libc::read(conn, buf.as_mut_ptr().cast(), buf.len() as libc::size_t) };
@@ -59,16 +61,14 @@ impl TCPServer {
                 break;
             }
             if n == -1 {
-                eprintln!("{}", io::Error::last_os_error());
-                TCPServer::close_fd(conn);
-                return;
+                return TCPServer::close_fd(conn, Some(io::Error::last_os_error()));
             }
             println!("{:?}", &buf[..n as usize]);
         }
-        TCPServer::close_fd(conn);
+        TCPServer::close_fd(conn, None)
     }
 
-    fn get_localhost() -> Result<libc::addrinfo, Box<dyn error::Error>> {
+    fn get_localhost(port: &str) -> Result<libc::addrinfo, Box<dyn error::Error>> {
         let hints = libc::addrinfo {
             ai_flags: 0,
             ai_family: libc::AF_INET,
@@ -81,7 +81,7 @@ impl TCPServer {
         };
         let mut result = ptr::null_mut();
         let host = ffi::CString::new("localhost")?;
-        let port = ffi::CString::new("8080")?;
+        let port = ffi::CString::new(port)?;
         let status = unsafe {
             libc::getaddrinfo(
                 host.as_ptr(),
@@ -99,10 +99,16 @@ impl TCPServer {
         Ok(unsafe { *result })
     }
 
-    fn close_fd(fd: i32) {
+    fn close_fd(fd: i32, error: Option<io::Error>) -> Result<(), io::Error> {
         let close_status = unsafe { libc::close(fd) };
-        if close_status == -1 {
-            eprintln!("{}", io::Error::last_os_error());
+        match (close_status, error) {
+            (-1, None) => Err(io::Error::last_os_error()),
+            (-1, Some(err)) => {
+                let merged = format!("error: {}, close: {}", err, io::Error::last_os_error());
+                Err(io::Error::new(err.kind(), merged))
+            }
+            (_, Some(err)) => Err(err),
+            (_, None) => Ok(()),
         }
     }
 }

@@ -11,19 +11,16 @@ impl DiskHandler {
     }
 
     fn handle_result(&self, bytes: &[u8]) -> Result<&[u8], Box<dyn error::Error>> {
-        let action = str::from_utf8(bytes)?
-            .split_whitespace()
-            .next()
-            .ok_or("empty body")?;
-        match action {
+        let mut split = str::from_utf8(bytes)?.split_whitespace();
+        match split.next().ok_or("empty body")? {
             "get" => {
                 Ok("get".as_bytes())
-                // let key = sub_matches.get_one::<String>("key").expect("required");
-                // if let Some(value) = disk_map.get(key) {
-                //     println!("{}", value);
-                // } else {
-                //     println!("No value found for {}", key);
-                // }
+                //let key = split.next();
+                //if let Some(value) = disk_map.get(key) {
+                //    println!("{}", value);
+                //} else {
+                //    println!("No value found for {}", key);
+                //}
             }
             "set" => {
                 Ok("set".as_bytes())
@@ -53,10 +50,10 @@ impl DiskHandler {
 }
 
 impl Handler for DiskHandler {
-    fn handle(&self, bytes: &[u8]) -> &[u8] {
+    fn handle(&self, bytes: &[u8]) -> Vec<u8> {
         match self.handle_result(bytes) {
-            Ok(out_bytes) => out_bytes,
-            Err(_) => "error encountered".as_bytes(),
+            Ok(out_bytes) => out_bytes.into(),
+            Err(err) => format!("error encountered: {}", err).into(),
         }
     }
 }

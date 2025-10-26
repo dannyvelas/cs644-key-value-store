@@ -13,7 +13,7 @@ use std::os::fd::AsFd;
 
 pub struct DiskMap {
     pub m: HashMap<String, String>,
-    fd: Option<os::fd::OwnedFd>,
+    fd: os::fd::OwnedFd,
     file_path: String,
 }
 
@@ -35,7 +35,7 @@ impl DiskMap {
 
         Ok(DiskMap {
             m,
-            fd: Some(new_fd),
+            fd: new_fd,
             file_path: String::from(file_path),
         })
     }
@@ -58,23 +58,21 @@ impl DiskMap {
         Ok((new_fd, v))
     }
 
-    fn write(&mut self) -> Result<usize, Box<dyn error::Error>> {
+    fn write(self) -> Result<usize, Box<dyn error::Error>> {
         // serialize hashmap
         let mut s = flexbuffers::FlexbufferSerializer::new();
         self.m.serialize(&mut s)?;
 
         // consume and replace fd
-        let old_fd = self.fd.take().ok_or("no fd")?;
-        let new_fd = DiskMap::write_lock(old_fd, s)?;
-        self.fd = Some(new_fd);
+        let n = DiskMap::write_lock(self.fd, s)?;
 
-        Ok(134)
+        Ok(n)
     }
 
     fn write_lock(
         fd: os::fd::OwnedFd,
         s: FlexbufferSerializer,
-    ) -> Result<os::fd::OwnedFd, Box<dyn error::Error>> {
+    ) -> Result<usize, Box<dyn error::Error>> {
         // acquire exclusive lock
         let lock = fcntl::Flock::lock(fd, FlockArg::LockExclusive).map_err(|(_, e)| e)?;
 
@@ -82,11 +80,12 @@ impl DiskMap {
         unistd::ftruncate(lock.as_fd(), 0)?;
 
         // write
-        let _ = unistd::write(lock.as_fd(), s.view())?;
+        let n = unistd::write(lock.as_fd(), s.view())?;
 
         // release lock
-        let new_fd = lock.unlock().map_err(|(_, e)| e)?;
-        Ok(new_fd)
+        let _ = lock.unlock().map_err(|(_, e)| e)?;
+
+        Ok(n)
     }
 
     pub fn set(&mut self, k: &str, v: &str) {

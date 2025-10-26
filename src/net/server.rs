@@ -1,15 +1,32 @@
 use nix::libc::{self, addrinfo};
-use std::{error, ffi, io, ptr};
+use std::{collections, error, ffi, io, ptr};
+
+use crate::net::types::Handler;
 
 pub struct TCPServer {
     localhost: addrinfo,
+    handlers: collections::HashMap<String, Box<dyn Handler>>,
 }
 
 impl TCPServer {
-    pub fn new(port: &str) -> Result<TCPServer, Box<dyn error::Error>> {
+    pub fn new(
+        port: &str,
+        handlers: Vec<Box<dyn Handler>>,
+    ) -> Result<TCPServer, Box<dyn error::Error>> {
         Ok(TCPServer {
             localhost: TCPServer::get_localhost(port)?,
+            handlers: TCPServer::handlers_to_map(handlers),
         })
+    }
+
+    fn handlers_to_map(
+        handlers: Vec<Box<dyn Handler>>,
+    ) -> collections::HashMap<String, Box<dyn Handler>> {
+        let mut hm = collections::HashMap::new();
+        for handler in handlers {
+            hm.insert(handler.action().to_string(), handler);
+        }
+        hm
     }
 
     pub fn start(&self) -> Result<(), Box<dyn error::Error>> {
@@ -47,25 +64,38 @@ impl TCPServer {
                 return Err("connection was -1".into());
             }
 
-            if let Err(err) = TCPServer::handle_connection(conn) {
-                return Err(err.into());
-            }
+            TCPServer::handle_connection(conn)?
         }
     }
 
-    fn handle_connection(conn: i32) -> Result<(), io::Error> {
+    fn handle_connection(conn: i32) -> Result<(), Box<dyn error::Error>> {
         loop {
             let mut buf = [0u8; 1024];
             let n = unsafe { libc::read(conn, buf.as_mut_ptr().cast(), buf.len() as libc::size_t) };
             if n == 0 {
                 break;
             }
-            if n == -1 {
-                return TCPServer::close_fd(conn, Some(io::Error::last_os_error()));
+            if n == -1
+                && let Err(err) = TCPServer::close_fd(conn, Some(io::Error::last_os_error()))
+            {
+                return Err(err.into());
             }
-            println!("{:?}", &buf[..n as usize]);
+            let bytes = &buf[..n as usize];
+            let mut output = TCPServer::dispatch_handler(bytes);
+
+            if unsafe { libc::write(conn, output.as_mut_ptr().cast(), buf.len() as libc::size_t) }
+                == -1
+                && let Err(err) = TCPServer::close_fd(conn, Some(io::Error::last_os_error()))
+            {
+                return Err(err.into());
+            }
         }
-        TCPServer::close_fd(conn, None)
+        TCPServer::close_fd(conn, None)?;
+        Ok(())
+    }
+
+    fn dispatch_handler(_bytes: &[u8]) -> Vec<u8> {
+        vec![65, 65, 65, 65]
     }
 
     fn get_localhost(port: &str) -> Result<libc::addrinfo, Box<dyn error::Error>> {

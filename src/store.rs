@@ -58,7 +58,7 @@ impl DiskMap {
         Ok((new_fd, v))
     }
 
-    fn write(self) -> Result<usize, Box<dyn error::Error>> {
+    pub fn write(self) -> Result<usize, Box<dyn error::Error>> {
         // serialize hashmap
         let mut s = flexbuffers::FlexbufferSerializer::new();
         self.m.serialize(&mut s)?;

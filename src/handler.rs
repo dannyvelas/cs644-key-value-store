@@ -10,49 +10,36 @@ impl DiskHandler {
         DiskHandler { disk_map }
     }
 
-    fn handle_result(&self, bytes: &[u8]) -> Result<&[u8], Box<dyn error::Error>> {
+    fn handle_result(&mut self, bytes: &[u8]) -> Result<Vec<u8>, Box<dyn error::Error>> {
         let mut split = str::from_utf8(bytes)?.split_whitespace();
         match split.next().ok_or("empty body")? {
             "get" => {
-                Ok("get".as_bytes())
-                //let key = split.next();
-                //if let Some(value) = disk_map.get(key) {
-                //    println!("{}", value);
-                //} else {
-                //    println!("No value found for {}", key);
-                //}
+                let key = split.next().ok_or("no key argument to get")?;
+                match self.disk_map.get(key) {
+                    Some(value) => Ok(value.to_owned().into()),
+                    None => Err(format!("No value found for {}", key).into()),
+                }
             }
             "set" => {
-                Ok("set".as_bytes())
-                // let k = sub_matches
-                //     .get_one::<String>("key")
-                //     .expect("required")
-                //     .as_str();
-                // let v = sub_matches
-                //     .get_one::<String>("value")
-                //     .expect("required")
-                //     .as_str();
-                // disk_map.set(k, v).unwrap();
+                let k = split.next().ok_or("no key argument to set")?;
+                let v = split.next().ok_or("no value argument to set")?;
+                self.disk_map.set(k, v);
+                Ok(format!("wrote {}={}", k, v).into())
             }
-            "size" => {
-                Ok("size".as_bytes())
-                // if let Err(e) = disk_map.size() {
-                //     println!("error calling size: {}", e)
-                // }
-            }
-            "dump" => {
-                Ok("dump".as_bytes())
-                // println!("{:#?}", disk_map.m);
-            }
-            _ => Ok("unrecognized".as_bytes()),
+            "size" => match self.disk_map.size() {
+                Err(err) => Err(format!("error calling size: {}", err).into()),
+                Ok(_) => Ok("got size".into()),
+            },
+            "dump" => Ok(format!("{:#?}", self.disk_map.m).into()),
+            _ => Ok("unrecognized".into()),
         }
     }
 }
 
 impl Handler for DiskHandler {
-    fn handle(&self, bytes: &[u8]) -> Vec<u8> {
+    fn handle(&mut self, bytes: &[u8]) -> Vec<u8> {
         match self.handle_result(bytes) {
-            Ok(out_bytes) => out_bytes.into(),
+            Ok(out_bytes) => out_bytes,
             Err(err) => format!("error encountered: {}", err).into(),
         }
     }

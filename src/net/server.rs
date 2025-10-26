@@ -16,7 +16,7 @@ impl TCPServer {
         })
     }
 
-    pub fn start(&self) -> Result<(), Box<dyn error::Error>> {
+    pub fn start(&mut self) -> Result<(), Box<dyn error::Error>> {
         let sockfd = unsafe {
             libc::socket(
                 self.localhost.ai_family,
@@ -55,7 +55,7 @@ impl TCPServer {
         }
     }
 
-    fn handle_connection(&self, conn: i32) -> Result<(), Box<dyn error::Error>> {
+    fn handle_connection(&mut self, conn: i32) -> Result<(), Box<dyn error::Error>> {
         loop {
             let mut buf = [0u8; 1024];
             let n = unsafe { libc::read(conn, buf.as_mut_ptr().cast(), buf.len() as libc::size_t) };

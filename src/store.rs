@@ -13,7 +13,7 @@ use std::os::fd::AsFd;
 
 pub struct DiskMap {
     pub m: HashMap<String, String>,
-    fd: os::fd::OwnedFd,
+    fd: Option<os::fd::OwnedFd>,
     file_path: String,
 }
 
@@ -35,7 +35,7 @@ impl DiskMap {
 
         Ok(DiskMap {
             m,
-            fd: new_fd,
+            fd: Some(new_fd),
             file_path: String::from(file_path),
         })
     }
@@ -58,13 +58,14 @@ impl DiskMap {
         Ok((new_fd, v))
     }
 
-    pub fn write(self) -> Result<usize, Box<dyn error::Error>> {
+    pub fn write(&mut self) -> Result<usize, Box<dyn error::Error>> {
         // serialize hashmap
         let mut s = flexbuffers::FlexbufferSerializer::new();
         self.m.serialize(&mut s)?;
 
         // consume and replace fd
-        let n = DiskMap::write_lock(self.fd, s)?;
+        let old_fd = self.fd.take().ok_or("no fd")?;
+        let n = DiskMap::write_lock(old_fd, s)?;
 
         Ok(n)
     }

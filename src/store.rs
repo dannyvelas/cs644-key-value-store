@@ -58,7 +58,7 @@ impl DiskMap {
         Ok((new_fd, v))
     }
 
-    pub fn write(&mut self) -> Result<usize, Box<dyn error::Error>> {
+    fn write(&mut self) -> Result<usize, Box<dyn error::Error>> {
         // serialize hashmap
         let mut s = flexbuffers::FlexbufferSerializer::new();
         self.m.serialize(&mut s)?;
@@ -117,6 +117,15 @@ impl DiskMap {
                 std::process::exit(1);
             }
             Err(err_no) => Err(err_no.into()),
+        }
+    }
+}
+
+impl Drop for DiskMap {
+    fn drop(&mut self) {
+        match self.write() {
+            Ok(n) => println!("wrote {} bytes", n),
+            Err(err) => eprintln!("error writing: {}", err),
         }
     }
 }

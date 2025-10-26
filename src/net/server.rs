@@ -39,7 +39,7 @@ impl TCPServer {
         };
 
         if unsafe { libc::bind(sockfd, self.localhost.ai_addr, self.localhost.ai_addrlen) } != 0 {
-            return Err("error calling bind".into());
+            return Err(io::Error::last_os_error().into());
         }
 
         if unsafe { libc::listen(sockfd, 128) } != 0 {
@@ -64,11 +64,11 @@ impl TCPServer {
                 return Err("connection was -1".into());
             }
 
-            TCPServer::handle_connection(conn)?
+            self.handle_connection(conn)?
         }
     }
 
-    fn handle_connection(conn: i32) -> Result<(), Box<dyn error::Error>> {
+    fn handle_connection(&self, conn: i32) -> Result<(), Box<dyn error::Error>> {
         loop {
             let mut buf = [0u8; 1024];
             let n = unsafe { libc::read(conn, buf.as_mut_ptr().cast(), buf.len() as libc::size_t) };
@@ -81,7 +81,7 @@ impl TCPServer {
                 return Err(err.into());
             }
             let bytes = &buf[..n as usize];
-            let mut output = TCPServer::dispatch_handler(bytes);
+            let mut output = self.dispatch_handler(bytes)?.to_owned();
 
             if unsafe { libc::write(conn, output.as_mut_ptr().cast(), buf.len() as libc::size_t) }
                 == -1
@@ -94,8 +94,16 @@ impl TCPServer {
         Ok(())
     }
 
-    fn dispatch_handler(_bytes: &[u8]) -> Vec<u8> {
-        vec![65, 65, 65, 65]
+    fn dispatch_handler(&self, bytes: &[u8]) -> Result<&[u8], Box<dyn error::Error>> {
+        let parsed = std::str::from_utf8(bytes)?;
+        let action = parsed.split_whitespace().next().ok_or("empty body")?;
+
+        let handler = self
+            .handlers
+            .get(action)
+            .ok_or_else(|| format!("unrecognized action: {}", action))?;
+
+        Ok(handler.handle(bytes))
     }
 
     fn get_localhost(port: &str) -> Result<libc::addrinfo, Box<dyn error::Error>> {

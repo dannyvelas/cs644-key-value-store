@@ -81,9 +81,9 @@ impl TCPServer {
                 return Err(err.into());
             }
             let bytes = &buf[..n as usize];
-            let mut output = self.dispatch_handler(bytes)?.to_owned();
+            let mut out = self.dispatch_handler(bytes)?.to_owned();
 
-            if unsafe { libc::write(conn, output.as_mut_ptr().cast(), buf.len() as libc::size_t) }
+            if unsafe { libc::write(conn, out.as_mut_ptr().cast(), out.len() as libc::size_t) }
                 == -1
                 && let Err(err) = TCPServer::close_fd(conn, Some(io::Error::last_os_error()))
             {

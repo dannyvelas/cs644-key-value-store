@@ -15,10 +15,7 @@ impl DiskHandler {
         match split.next().ok_or("empty body")? {
             "get" => {
                 let key = split.next().ok_or("no key argument to get")?;
-                match self.disk_map.get(key) {
-                    Some(value) => Ok(value.to_owned()),
-                    None => Err(format!("No value found for {}", key).into()),
-                }
+                self.disk_map.get(key)
             }
             "set" => {
                 let k = split.next().ok_or("no key argument to set")?;
@@ -30,7 +27,10 @@ impl DiskHandler {
                 Err(err) => Err(format!("error calling size: {}", err).into()),
                 Ok(_) => Ok("got size".into()),
             },
-            "dump" => Ok(format!("{:#?}", self.disk_map.m)),
+            "dump" => {
+                let m = self.disk_map.dump()?;
+                Ok(format!("{:#?}", m))
+            }
             _ => Ok("unrecognized".into()),
         }
     }

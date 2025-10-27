@@ -8,24 +8,35 @@ use nix::unistd;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error;
+use std::ops::Deref;
 use std::os;
 use std::os::fd::AsFd;
 
+pub struct ReadResult {
+    fd: os::fd::OwnedFd,
+    m: HashMap<String, String>,
+}
+
 pub struct DiskMap {
-    pub m: HashMap<String, String>,
-    fd: Option<os::fd::OwnedFd>,
     file_path: String,
 }
 
 impl DiskMap {
     pub fn new(file_path: &str) -> Result<DiskMap, Box<dyn error::Error>> {
+        Ok(DiskMap {
+            file_path: String::from(file_path),
+        })
+    }
+
+    fn read(&self) -> Result<ReadResult, Box<dyn error::Error>> {
         let fd = fcntl::open(
-            file_path,
+            self.file_path.deref(),
             OFlag::O_RDWR | OFlag::O_CREAT,
             Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH,
         )?;
 
-        let (new_fd, data) = DiskMap::read(fd)?;
+        let (new_fd, data) = DiskMap::read_lock(fd)?;
+
         let m = if data.is_empty() {
             HashMap::new()
         } else {
@@ -33,14 +44,10 @@ impl DiskMap {
             HashMap::deserialize(reader)?
         };
 
-        Ok(DiskMap {
-            m,
-            fd: Some(new_fd),
-            file_path: String::from(file_path),
-        })
+        Ok(ReadResult { fd: new_fd, m })
     }
 
-    fn read(fd: os::fd::OwnedFd) -> Result<(os::fd::OwnedFd, Vec<u8>), Box<dyn error::Error>> {
+    fn read_lock(fd: os::fd::OwnedFd) -> Result<(os::fd::OwnedFd, Vec<u8>), Box<dyn error::Error>> {
         let mut buf = [0u8; 1024];
         let mut v: Vec<u8> = Vec::new();
 
@@ -58,23 +65,10 @@ impl DiskMap {
         Ok((new_fd, v))
     }
 
-    fn write(&mut self) -> Result<usize, Box<dyn error::Error>> {
-        // serialize hashmap
-        let mut s = flexbuffers::FlexbufferSerializer::new();
-        self.m.serialize(&mut s)?;
-
-        // consume and replace fd
-        let old_fd = self.fd.take().ok_or("no fd")?;
-        let (new_fd, n) = DiskMap::write_lock(old_fd, s)?;
-        self.fd = Some(new_fd);
-
-        Ok(n)
-    }
-
     fn write_lock(
         fd: os::fd::OwnedFd,
         s: FlexbufferSerializer,
-    ) -> Result<(os::fd::OwnedFd, usize), Box<dyn error::Error>> {
+    ) -> Result<usize, Box<dyn error::Error>> {
         // acquire exclusive lock
         let lock = fcntl::Flock::lock(fd, FlockArg::LockExclusive).map_err(|(_, e)| e)?;
 
@@ -85,18 +79,35 @@ impl DiskMap {
         let n = unistd::write(lock.as_fd(), s.view())?;
 
         // release lock
-        let new_fd = lock.unlock().map_err(|(_, e)| e)?;
+        let _ = lock.unlock().map_err(|(_, e)| e)?;
 
-        Ok((new_fd, n))
+        Ok(n)
     }
 
-    pub fn set(&mut self, k: &str, v: &str) -> Result<usize, Box<dyn error::Error>> {
-        self.m.insert(k.to_string(), v.to_string());
-        self.write()
+    pub fn set(&self, k: &str, v: &str) -> Result<usize, Box<dyn error::Error>> {
+        let mut read_result = self.read()?;
+
+        // set new values
+        read_result.m.insert(k.to_string(), v.to_string());
+
+        // serialize hashmap
+        let mut s = flexbuffers::FlexbufferSerializer::new();
+        read_result.m.serialize(&mut s)?;
+
+        // consume and replace fd
+        let n = DiskMap::write_lock(read_result.fd, s)?;
+
+        Ok(n)
     }
 
-    pub fn get(&self, k: &str) -> Option<&String> {
-        self.m.get(k)
+    pub fn get(&self, k: &str) -> Result<String, Box<dyn error::Error>> {
+        let read_result = self.read()?;
+        Ok(read_result.m.get(k).ok_or("not found")?.to_owned())
+    }
+
+    pub fn dump(&self) -> Result<HashMap<String, String>, Box<dyn error::Error>> {
+        let read_result = self.read()?;
+        Ok(read_result.m)
     }
 
     pub fn size(&self) -> Result<(), Box<dyn error::Error>> {

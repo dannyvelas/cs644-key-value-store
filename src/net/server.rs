@@ -1,31 +1,28 @@
-use nix::libc::{self, addrinfo};
+use nix::libc::{self};
 use std::{error, ffi, io, ptr};
 
 use crate::net::types::Handler;
 
 pub struct TCPServer {
-    localhost: addrinfo,
     handler: Box<dyn Handler>,
 }
 
 impl TCPServer {
-    pub fn new(port: &str, handler: Box<dyn Handler>) -> Result<TCPServer, Box<dyn error::Error>> {
-        Ok(TCPServer {
-            localhost: TCPServer::get_localhost(port)?,
-            handler,
-        })
+    pub fn new(handler: Box<dyn Handler>) -> TCPServer {
+        TCPServer { handler }
     }
 
-    pub fn start(&mut self) -> Result<(), Box<dyn error::Error>> {
+    pub fn start(&mut self, port: &str) -> Result<(), Box<dyn error::Error>> {
+        let localhost = TCPServer::get_localhost(port)?;
         let sockfd = unsafe {
             libc::socket(
-                self.localhost.ai_family,
-                self.localhost.ai_socktype,
-                self.localhost.ai_protocol,
+                localhost.ai_family,
+                localhost.ai_socktype,
+                localhost.ai_protocol,
             )
         };
 
-        if unsafe { libc::bind(sockfd, self.localhost.ai_addr, self.localhost.ai_addrlen) } != 0 {
+        if unsafe { libc::bind(sockfd, localhost.ai_addr, localhost.ai_addrlen) } != 0 {
             return Err(io::Error::last_os_error().into());
         }
 

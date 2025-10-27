@@ -23,8 +23,8 @@ impl DiskHandler {
             "set" => {
                 let k = split.next().ok_or("no key argument to set")?;
                 let v = split.next().ok_or("no value argument to set")?;
-                self.disk_map.set(k, v);
-                Ok(format!("wrote {}={}", k, v))
+                let n = self.disk_map.set(k, v)?;
+                Ok(format!("wrote {}={}. {} bytes", k, v, n))
             }
             "size" => match self.disk_map.size() {
                 Err(err) => Err(format!("error calling size: {}", err).into()),

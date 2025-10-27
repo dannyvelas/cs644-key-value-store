@@ -65,7 +65,8 @@ impl DiskMap {
 
         // consume and replace fd
         let old_fd = self.fd.take().ok_or("no fd")?;
-        let n = DiskMap::write_lock(old_fd, s)?;
+        let (new_fd, n) = DiskMap::write_lock(old_fd, s)?;
+        self.fd = Some(new_fd);
 
         Ok(n)
     }
@@ -73,7 +74,7 @@ impl DiskMap {
     fn write_lock(
         fd: os::fd::OwnedFd,
         s: FlexbufferSerializer,
-    ) -> Result<usize, Box<dyn error::Error>> {
+    ) -> Result<(os::fd::OwnedFd, usize), Box<dyn error::Error>> {
         // acquire exclusive lock
         let lock = fcntl::Flock::lock(fd, FlockArg::LockExclusive).map_err(|(_, e)| e)?;
 
@@ -84,13 +85,14 @@ impl DiskMap {
         let n = unistd::write(lock.as_fd(), s.view())?;
 
         // release lock
-        let _ = lock.unlock().map_err(|(_, e)| e)?;
+        let new_fd = lock.unlock().map_err(|(_, e)| e)?;
 
-        Ok(n)
+        Ok((new_fd, n))
     }
 
-    pub fn set(&mut self, k: &str, v: &str) {
+    pub fn set(&mut self, k: &str, v: &str) -> Result<usize, Box<dyn error::Error>> {
         self.m.insert(k.to_string(), v.to_string());
+        self.write()
     }
 
     pub fn get(&self, k: &str) -> Option<&String> {
@@ -117,15 +119,6 @@ impl DiskMap {
                 std::process::exit(1);
             }
             Err(err_no) => Err(err_no.into()),
-        }
-    }
-}
-
-impl Drop for DiskMap {
-    fn drop(&mut self) {
-        match self.write() {
-            Ok(n) => println!("wrote {} bytes", n),
-            Err(err) => eprintln!("error writing: {}", err),
         }
     }
 }

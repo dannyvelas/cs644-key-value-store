@@ -25,7 +25,7 @@ impl DiskHandler {
             }
             "size" => match self.disk_map.size() {
                 Err(err) => Err(format!("error calling size: {}", err).into()),
-                Ok(_) => Ok("got size".into()),
+                Ok(size) => Ok(format!("got size: {}", size)),
             },
             "dump" => {
                 let m = self.disk_map.dump()?;

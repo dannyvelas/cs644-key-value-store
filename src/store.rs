@@ -4,7 +4,7 @@ use flexbuffers::FlexbufferSerializer;
 use nix::fcntl::OFlag;
 use nix::fcntl::{self, FlockArg};
 use nix::sys::stat::Mode;
-use nix::unistd;
+use nix::unistd::{self, close, dup2_stdout};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error;
@@ -110,15 +110,36 @@ impl DiskMap {
         Ok(read_result.m)
     }
 
-    pub fn size(&self) -> Result<(), Box<dyn error::Error>> {
+    pub fn size(&self) -> Result<String, Box<dyn error::Error>> {
+        let (r, w) = unistd::pipe()?;
         match unsafe { unistd::fork() } {
             Ok(unistd::ForkResult::Parent { child, .. }) => {
-                match nix::sys::wait::waitpid(child, None) {
-                    Ok(_) => Ok(()),
-                    Err(err) => Err(format!("error waiting: {}", err).into()),
+                // we don't need to write as a parent, just read
+                close(w)?;
+                // wait for our child to terminate
+                nix::sys::wait::waitpid(child, None)?;
+                // read from our child
+                let mut buf = [0u8; 1024];
+                let mut v: Vec<u8> = Vec::new();
+
+                loop {
+                    let n = unistd::read(&r, &mut buf)?;
+                    if n == 0 {
+                        break;
+                    }
+
+                    v.extend_from_slice(&buf[..n]);
                 }
+
+                Ok(String::from_utf8(v)?)
             }
             Ok(unistd::ForkResult::Child) => {
+                // we don't need to read as a child, just write
+                close(r)?;
+                // make a copy our writing fd. it should be given the same fd as stdout. so when
+                // someone writes to stdout, it will write to the same destination as `w`
+                dup2_stdout(w)?;
+                // execv
                 let path = std::ffi::CString::new("/usr/bin/wc")?;
                 let arg1 = std::ffi::CString::new("-c")?;
                 let arg2 = std::ffi::CString::new(self.file_path.clone())?;

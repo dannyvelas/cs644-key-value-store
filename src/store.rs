@@ -130,8 +130,7 @@ impl DiskMap {
 
                     v.extend_from_slice(&buf[..n]);
                 }
-
-                Ok(String::from_utf8(v)?)
+                Ok(String::from_utf8(v)?.trim_end().to_string())
             }
             Ok(unistd::ForkResult::Child) => {
                 // we don't need to read as a child, just write

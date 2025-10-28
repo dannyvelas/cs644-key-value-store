@@ -1,5 +1,5 @@
 use nix::libc::{self};
-use std::{error, ffi, io, ptr};
+use std::{error, ffi, io, mem, ptr};
 
 use crate::net::types::Handler;
 
@@ -12,7 +12,7 @@ impl TCPServer {
         TCPServer { handler }
     }
 
-    pub fn start(&mut self, port: &str) -> Result<(), Box<dyn error::Error>> {
+    pub fn start(&self, port: &str) -> Result<(), Box<dyn error::Error>> {
         let localhost = TCPServer::get_localhost(port)?;
         let sockfd = unsafe {
             libc::socket(
@@ -48,11 +48,61 @@ impl TCPServer {
                 return Err("connection was -1".into());
             }
 
-            self.handle_connection(conn)?
+            // spawn thread
+            match unsafe {
+                let mut native: libc::pthread_t = mem::zeroed();
+                let arg_ptr = Box::into_raw(Box::new(self)) as *mut ffi::c_void;
+                libc::pthread_create(&mut native, ptr::null(), TCPServer::wrapper, arg_ptr)
+            } {
+                0 => continue,
+                libc::EAGAIN => return Err("insufficient resources".into()),
+                libc::EINVAL => return Err("invalid settings in attr".into()),
+                libc::EPERM => return Err("insufficient permissions".into()),
+                ret => return Err(format!("unexpected return value: {}", ret).into()),
+            }
         }
     }
 
-    fn handle_connection(&mut self, conn: i32) -> Result<(), Box<dyn error::Error>> {
+    fn get_localhost(port: &str) -> Result<libc::addrinfo, Box<dyn error::Error>> {
+        let hints = libc::addrinfo {
+            ai_flags: 0,
+            ai_family: libc::AF_INET,
+            ai_socktype: libc::SOCK_STREAM,
+            ai_protocol: 0,
+            ai_addrlen: 0,
+            ai_canonname: ptr::null_mut(),
+            ai_addr: ptr::null_mut(),
+            ai_next: ptr::null_mut(),
+        };
+        let mut result = ptr::null_mut();
+        let host = ffi::CString::new("localhost")?;
+        let port = ffi::CString::new(port)?;
+        let status = unsafe {
+            libc::getaddrinfo(
+                host.as_ptr(),
+                port.as_ptr(),
+                &hints as *const libc::addrinfo,
+                &mut result,
+            )
+        };
+        if status != 0 {
+            let err_msg_raw = unsafe { libc::gai_strerror(status) };
+            let err_msg = unsafe { ffi::CStr::from_ptr(err_msg_raw) }.to_str()?;
+            return Err(format!("error calling getaddrinfo: {}", err_msg).into());
+        }
+
+        Ok(unsafe { *result })
+    }
+
+    extern "C" fn wrapper(arg: *mut ffi::c_void) -> *mut ffi::c_void {
+        unsafe {
+            let arg = *Box::from_raw(arg as *mut TCPServer);
+            arg.handle_connection(345);
+            ptr::null_mut()
+        }
+    }
+
+    fn handle_connection(&self, conn: i32) -> Result<(), Box<dyn error::Error>> {
         loop {
             // show prompt
             let mut p = String::from("\n~> ");
@@ -88,37 +138,6 @@ impl TCPServer {
         }
         TCPServer::close_fd(conn, None)?;
         Ok(())
-    }
-
-    fn get_localhost(port: &str) -> Result<libc::addrinfo, Box<dyn error::Error>> {
-        let hints = libc::addrinfo {
-            ai_flags: 0,
-            ai_family: libc::AF_INET,
-            ai_socktype: libc::SOCK_STREAM,
-            ai_protocol: 0,
-            ai_addrlen: 0,
-            ai_canonname: ptr::null_mut(),
-            ai_addr: ptr::null_mut(),
-            ai_next: ptr::null_mut(),
-        };
-        let mut result = ptr::null_mut();
-        let host = ffi::CString::new("localhost")?;
-        let port = ffi::CString::new(port)?;
-        let status = unsafe {
-            libc::getaddrinfo(
-                host.as_ptr(),
-                port.as_ptr(),
-                &hints as *const libc::addrinfo,
-                &mut result,
-            )
-        };
-        if status != 0 {
-            let err_msg_raw = unsafe { libc::gai_strerror(status) };
-            let err_msg = unsafe { ffi::CStr::from_ptr(err_msg_raw) }.to_str()?;
-            return Err(format!("error calling getaddrinfo: {}", err_msg).into());
-        }
-
-        Ok(unsafe { *result })
     }
 
     fn close_fd(fd: i32, error: Option<io::Error>) -> Result<(), io::Error> {

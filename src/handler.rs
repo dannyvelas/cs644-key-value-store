@@ -10,7 +10,7 @@ impl DiskHandler {
         DiskHandler { disk_map }
     }
 
-    fn handle_result(&mut self, bytes: &[u8]) -> Result<String, Box<dyn error::Error>> {
+    fn handle_result(&self, bytes: &[u8]) -> Result<String, Box<dyn error::Error>> {
         let mut split = str::from_utf8(bytes)?.split_whitespace();
         match split.next().ok_or("empty body")? {
             "get" => {
@@ -37,7 +37,7 @@ impl DiskHandler {
 }
 
 impl Handler for DiskHandler {
-    fn handle(&mut self, bytes: &[u8]) -> Vec<u8> {
+    fn handle(&self, bytes: &[u8]) -> Vec<u8> {
         match self.handle_result(bytes) {
             Ok(out_bytes) => (out_bytes + "\n").into(),
             Err(err) => format!("error encountered: {}\n", err).into(),

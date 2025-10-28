@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-clap = { version = "4.5.48", features = [] }
 flexbuffers = "25.2.10"
 nix = { version = "0.30.1", features = ["fs", "process"] }
 serde = { version = "1.0.226", features = ["derive"] }

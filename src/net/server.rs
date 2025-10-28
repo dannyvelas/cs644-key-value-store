@@ -36,7 +36,6 @@ impl TCPServer {
         }
 
         let mut address = libc::sockaddr {
-            sa_len: 0,
             sa_family: 0,
             sa_data: [0; 14],
         };

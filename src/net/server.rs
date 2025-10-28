@@ -54,6 +54,15 @@ impl TCPServer {
 
     fn handle_connection(&mut self, conn: i32) -> Result<(), Box<dyn error::Error>> {
         loop {
+            // show prompt
+            let mut p = String::from("\n~> ");
+            if unsafe { libc::write(conn, p.as_mut_ptr().cast(), p.len() as libc::size_t) } == -1
+                && let Err(err) = TCPServer::close_fd(conn, Some(io::Error::last_os_error()))
+            {
+                return Err(err.into());
+            }
+
+            // read input
             let mut buf = [0u8; 1024];
             let n = unsafe { libc::read(conn, buf.as_mut_ptr().cast(), buf.len() as libc::size_t) };
             if n == 0 {
@@ -65,8 +74,11 @@ impl TCPServer {
                 return Err(err.into());
             }
             let bytes = &buf[..n as usize];
+
+            // process
             let mut out = self.handler.handle(bytes);
 
+            // write output
             if unsafe { libc::write(conn, out.as_mut_ptr().cast(), out.len() as libc::size_t) }
                 == -1
                 && let Err(err) = TCPServer::close_fd(conn, Some(io::Error::last_os_error()))

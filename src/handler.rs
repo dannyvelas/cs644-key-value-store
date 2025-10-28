@@ -25,7 +25,7 @@ impl DiskHandler {
             }
             "size" => match self.disk_map.size() {
                 Err(err) => Err(format!("error calling size: {}", err).into()),
-                Ok(size) => Ok(format!("got size: {}", size)),
+                Ok(size) => Ok(size),
             },
             "dump" => {
                 let m = self.disk_map.dump()?;
@@ -39,8 +39,8 @@ impl DiskHandler {
 impl Handler for DiskHandler {
     fn handle(&mut self, bytes: &[u8]) -> Vec<u8> {
         match self.handle_result(bytes) {
-            Ok(out_bytes) => (out_bytes + "\n\n").into(),
-            Err(err) => format!("error encountered: {}\n\n", err).into(),
+            Ok(out_bytes) => (out_bytes + "\n").into(),
+            Err(err) => format!("error encountered: {}\n", err).into(),
         }
     }
 }

@@ -3,6 +3,11 @@ use std::{error, ffi, io, mem, ptr};
 
 use crate::net::types::Handler;
 
+pub struct ConnectionCtx<'a> {
+    server: &'a TCPServer,
+    conn: i32,
+}
+
 pub struct TCPServer {
     handler: Box<dyn Handler>,
 }
@@ -51,7 +56,8 @@ impl TCPServer {
             // spawn thread
             match unsafe {
                 let mut native: libc::pthread_t = mem::zeroed();
-                let arg_ptr = Box::into_raw(Box::new(self)) as *mut ffi::c_void;
+                let boxed_args = Box::new(ConnectionCtx { server: self, conn });
+                let arg_ptr = Box::into_raw(boxed_args) as *mut ffi::c_void;
                 libc::pthread_create(&mut native, ptr::null(), TCPServer::wrapper, arg_ptr)
             } {
                 0 => continue,
@@ -96,8 +102,10 @@ impl TCPServer {
 
     extern "C" fn wrapper(arg: *mut ffi::c_void) -> *mut ffi::c_void {
         unsafe {
-            let arg = *Box::from_raw(arg as *mut TCPServer);
-            arg.handle_connection(345);
+            let arg = Box::from_raw(arg as *mut ConnectionCtx);
+            if let Err(err) = arg.server.handle_connection(arg.conn) {
+                eprintln!("internal server error encountered: {}", err)
+            }
             ptr::null_mut()
         }
     }

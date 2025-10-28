@@ -58,7 +58,7 @@ impl TCPServer {
                 let mut native: libc::pthread_t = mem::zeroed();
                 let boxed_args = Box::new(ConnectionCtx { server: self, conn });
                 let arg_ptr = Box::into_raw(boxed_args) as *mut ffi::c_void;
-                libc::pthread_create(&mut native, ptr::null(), TCPServer::wrapper, arg_ptr)
+                libc::pthread_create(&mut native, ptr::null(), TCPServer::handle_c, arg_ptr)
             } {
                 0 => continue,
                 libc::EAGAIN => return Err("insufficient resources".into()),
@@ -100,7 +100,7 @@ impl TCPServer {
         Ok(unsafe { *result })
     }
 
-    extern "C" fn wrapper(arg: *mut ffi::c_void) -> *mut ffi::c_void {
+    extern "C" fn handle_c(arg: *mut ffi::c_void) -> *mut ffi::c_void {
         unsafe {
             let arg = Box::from_raw(arg as *mut ConnectionCtx);
             if let Err(err) = arg.server.handle_connection(arg.conn) {

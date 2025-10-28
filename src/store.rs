@@ -7,10 +7,10 @@ use nix::sys::stat::Mode;
 use nix::unistd::{self, close, dup2_stdout};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::error;
 use std::ops::Deref;
 use std::os;
 use std::os::fd::AsFd;
+use std::{error, thread, time};
 
 pub struct ReadResult {
     fd: os::fd::OwnedFd,
@@ -71,6 +71,8 @@ impl DiskMap {
     ) -> Result<usize, Box<dyn error::Error>> {
         // acquire exclusive lock
         let lock = fcntl::Flock::lock(fd, FlockArg::LockExclusive).map_err(|(_, e)| e)?;
+
+        thread::sleep(time::Duration::from_secs(11));
 
         // self.truncate file
         unistd::ftruncate(lock.as_fd(), 0)?;

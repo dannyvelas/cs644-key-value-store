@@ -8,9 +8,8 @@ use nix::unistd::{self, close, dup2_stdout};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Deref;
-use std::os;
 use std::os::fd::AsFd;
-use std::{error, thread, time};
+use std::{error, ffi, os, process, thread, time};
 
 pub struct ReadResult {
     fd: os::fd::OwnedFd,
@@ -141,15 +140,15 @@ impl DiskMap {
                 // someone writes to stdout, it will write to the same destination as `w`
                 dup2_stdout(w)?;
                 // execv
-                let path = std::ffi::CString::new("/usr/bin/wc")?;
-                let arg1 = std::ffi::CString::new("-c")?;
-                let arg2 = std::ffi::CString::new(self.file_path.clone())?;
+                let path = ffi::CString::new("/usr/bin/wc")?;
+                let arg1 = ffi::CString::new("-c")?;
+                let arg2 = ffi::CString::new(self.file_path.clone())?;
                 let argv = [&path, &arg1, &arg2];
                 let Err(err) = nix::unistd::execv(&path, &argv);
                 // if we're here, it means execv failed. if it succeeded then the code from this process would
                 // have been replaced by now
                 eprintln!("execv failed: {}", err);
-                std::process::exit(1);
+                process::exit(1);
             }
             Err(err_no) => Err(err_no.into()),
         }

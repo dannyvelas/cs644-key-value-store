@@ -1,4 +1,4 @@
-use nix::libc::{self};
+use nix::libc;
 use std::{error, ffi, io, mem, ptr};
 
 use crate::net::types::Handler;
@@ -18,24 +18,14 @@ impl TCPServer {
     }
 
     pub fn start(&self, port: &str) -> Result<(), Box<dyn error::Error>> {
-        let localhost = TCPServer::get_localhost(port)?;
-        let sockfd = unsafe {
-            libc::socket(
-                localhost.ai_family,
-                localhost.ai_socktype,
-                localhost.ai_protocol,
-            )
-        };
+        let sock_fd = TCPServer::local_sockfd(port)?;
 
-        if unsafe { libc::bind(sockfd, localhost.ai_addr, localhost.ai_addrlen) } != 0 {
-            return Err(io::Error::last_os_error().into());
-        }
-
-        if unsafe { libc::listen(sockfd, 128) } != 0 {
+        if unsafe { libc::listen(sock_fd, 128) } != 0 {
             return Err("error calling listen".into());
         }
 
         let mut address = libc::sockaddr {
+            sa_len: 0,
             sa_family: 0,
             sa_data: [0; 14],
         };
@@ -43,7 +33,7 @@ impl TCPServer {
         loop {
             let conn = unsafe {
                 libc::accept(
-                    sockfd,
+                    sock_fd,
                     &mut address as *mut libc::sockaddr,
                     &mut address_len as *mut libc::socklen_t,
                 )
@@ -68,7 +58,7 @@ impl TCPServer {
         }
     }
 
-    fn get_localhost(port: &str) -> Result<libc::addrinfo, Box<dyn error::Error>> {
+    fn local_sockfd(port: &str) -> Result<i32, Box<dyn error::Error>> {
         let hints = libc::addrinfo {
             ai_flags: 0,
             ai_family: libc::AF_INET,
@@ -82,31 +72,56 @@ impl TCPServer {
         let mut result = ptr::null_mut();
         let host = ffi::CString::new("localhost")?;
         let port = ffi::CString::new(port)?;
-        let status = unsafe {
-            libc::getaddrinfo(
+        unsafe {
+            let status = libc::getaddrinfo(
                 host.as_ptr(),
                 port.as_ptr(),
                 &hints as *const libc::addrinfo,
                 &mut result,
-            )
-        };
-        if status != 0 {
-            let err_msg_raw = unsafe { libc::gai_strerror(status) };
-            let err_msg = unsafe { ffi::CStr::from_ptr(err_msg_raw) }.to_str()?;
-            return Err(format!("error calling getaddrinfo: {}", err_msg).into());
-        }
+            );
+            if status != 0 {
+                let err_msg_raw = libc::gai_strerror(status);
+                let err_msg = ffi::CStr::from_ptr(err_msg_raw).to_str()?;
+                return Err(format!("error calling getaddrinfo: {}", err_msg).into());
+            }
 
-        Ok(unsafe { *result })
+            let mut result_ptr = result;
+            let mut sock_fd = 0;
+            while !result_ptr.is_null() {
+                sock_fd = libc::socket(
+                    (*result_ptr).ai_family,
+                    (*result_ptr).ai_socktype,
+                    (*result_ptr).ai_protocol,
+                );
+                if sock_fd == -1 {
+                    result_ptr = (*result_ptr).ai_next;
+                    continue;
+                }
+
+                if libc::bind(sock_fd, (*result_ptr).ai_addr, (*result_ptr).ai_addrlen) != 0 {
+                    libc::close(sock_fd);
+                    result_ptr = (*result_ptr).ai_next;
+                    continue;
+                }
+
+                break;
+            }
+            libc::freeaddrinfo(result);
+
+            if result_ptr.is_null() {
+                return Err("could not bind".into());
+            }
+
+            Ok(sock_fd)
+        }
     }
 
     extern "C" fn handle_c(arg: *mut ffi::c_void) -> *mut ffi::c_void {
-        unsafe {
-            let arg = Box::from_raw(arg as *mut ConnectionCtx);
-            if let Err(err) = arg.server.handle_connection(arg.conn) {
-                eprintln!("internal server error encountered: {}", err)
-            }
-            ptr::null_mut()
+        let arg = unsafe { Box::from_raw(arg as *mut ConnectionCtx) };
+        if let Err(err) = arg.server.handle_connection(arg.conn) {
+            eprintln!("internal server error encountered: {}", err)
         }
+        ptr::null_mut()
     }
 
     fn handle_connection(&self, conn: i32) -> Result<(), Box<dyn error::Error>> {

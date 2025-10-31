@@ -23,10 +23,13 @@ impl TCPServer {
         if unsafe { libc::listen(sock_fd, 128) } != 0 {
             return Err("error calling listen".into());
         }
+        println!("AFTER LISTEN");
 
         // set up epoll
         let epoll_fd = unsafe { libc::epoll_create(1) };
+        println!("AFTER CREATE EPOLL");
         TCPServer::setup_epoll(epoll_fd, signal_fd, sock_fd)?;
+        println!("AFTER SETUP");
 
         const MAX_EVENTS: usize = 256;
         let mut events: [libc::epoll_event; MAX_EVENTS] = unsafe { mem::zeroed() };
@@ -34,7 +37,11 @@ impl TCPServer {
             let count =
                 unsafe { libc::epoll_wait(epoll_fd, events.as_mut_ptr(), MAX_EVENTS as i32, -1) };
             if count == -1 {
-                return Err("got -1 from epoll_wait".into());
+                let last_err = io::Error::last_os_error();
+                if last_err.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                return Err(format!("got -1 from epoll_wait: {}", last_err).into());
             }
             for i in 0..count as usize {
                 self.handle_event(events[i], signal_fd, sock_fd)?;
@@ -50,6 +57,7 @@ impl TCPServer {
     ) -> Result<(), Box<dyn error::Error>> {
         let fd = event.u64 as i32;
         if fd == signal_fd {
+            println!("accepting signal!");
             self.accept_signal(signal_fd)
         } else if fd == sock_fd {
             self.accept_conn(sock_fd)
@@ -92,22 +100,34 @@ impl TCPServer {
         }
     }
 
-    fn setup_epoll(epoll_fd: i32, signal_fd: i32, sock_fd: i32) -> Result<(), io::Error> {
+    fn setup_epoll(
+        epoll_fd: i32,
+        signal_fd: i32,
+        sock_fd: i32,
+    ) -> Result<(), Box<dyn error::Error>> {
         unsafe {
             let mut signal_ev = libc::epoll_event {
                 events: libc::EPOLLIN as u32,
                 u64: signal_fd as u64,
             };
             if libc::epoll_ctl(epoll_fd, libc::EPOLL_CTL_ADD, signal_fd, &mut signal_ev) == -1 {
-                return Err(io::Error::last_os_error());
+                return Err(format!(
+                    "error adding signal to epoll: {}",
+                    io::Error::last_os_error()
+                )
+                .into());
             }
 
             let mut sock_ev = libc::epoll_event {
                 events: libc::EPOLLIN as u32,
                 u64: sock_fd as u64,
             };
-            if libc::epoll_ctl(epoll_fd, libc::EPOLL_CTL_ADD, signal_fd, &mut sock_ev) == -1 {
-                return Err(io::Error::last_os_error());
+            if libc::epoll_ctl(epoll_fd, libc::EPOLL_CTL_ADD, sock_fd, &mut sock_ev) == -1 {
+                return Err(format!(
+                    "error adding socket to epoll: {}",
+                    io::Error::last_os_error()
+                )
+                .into());
             }
         }
         Ok(())

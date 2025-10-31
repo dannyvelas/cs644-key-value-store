@@ -8,12 +8,16 @@ mod store;
 static mut SELF_PIPE_WRITE: i32 = -1;
 
 extern "C" fn handle_signal(signal_no: libc::c_int) {
+    //let msg = "at signal handler!";
+    //let len = msg.len() as libc::size_t;
+    //unsafe { libc::write(1, msg.as_ptr() as *const ffi::c_void, len) };
     if unsafe { SELF_PIPE_WRITE } == -1 {
         return;
     }
 
     let buf: [char; 1] = [signal_no as u8 as char];
-    unsafe { libc::write(SELF_PIPE_WRITE, buf.as_ptr() as *const ffi::c_void, 1) };
+    let len = buf.len() as libc::size_t;
+    unsafe { libc::write(SELF_PIPE_WRITE, buf.as_ptr() as *const ffi::c_void, len) };
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
@@ -31,7 +35,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             sa_restorer: mem::zeroed(),
         };
         libc::sigemptyset(&mut action.sa_mask);
-        if libc::sigaction(libc::SIGTERM, &action, ptr::null_mut()) == -1 {
+        if libc::sigaction(libc::SIGUSR1, &action, ptr::null_mut()) == -1 {
             return Err(io::Error::last_os_error().into());
         }
     }
@@ -41,8 +45,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     // define handlers
     let handler = Box::new(handler::DiskHandler::new(disk_map));
+    println!("AFTER HANDLER");
 
     // start server
     let tcp_server = net::server::TCPServer::new(handler);
+    println!("AFTER NEW SERVER");
     tcp_server.start(pipefd[0], "8080")
 }

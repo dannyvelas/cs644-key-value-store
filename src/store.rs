@@ -3,14 +3,15 @@
  */
 extern crate flexbuffers;
 
+use nix::fcntl;
 use nix::fcntl::OFlag;
-use nix::fcntl::{self, FlockArg};
+use nix::libc;
 use nix::sys::stat::Mode;
-use nix::unistd::{self, close, dup2_stdout};
+use nix::unistd;
 use std::collections::HashMap;
 use std::ops::Deref;
-use std::os::fd::AsFd;
-use std::{error, ffi, mem, os, process};
+use std::os::fd::{AsFd, AsRawFd};
+use std::{error, ffi, io, mem, os, process};
 
 struct ReadResult {
     offset: usize,
@@ -33,18 +34,18 @@ impl Iterator for ReadResult {
             // get key size field, it is 4 bytes long and stored in big-endian
             // if number is 0xCAFEBABE, it is stored as CA FE BA BE
             let key_size_bytes = &self.data[self.offset..(self.offset + 4)];
-            let key_size = ((key_size_bytes[0] << 24)
-                | (key_size_bytes[1] << 16)
-                | (key_size_bytes[2] << 8)
-                | (key_size_bytes[3])) as usize;
+            let key_size = (((key_size_bytes[0] as i32) << 24)
+                | ((key_size_bytes[1] as i32) << 16)
+                | ((key_size_bytes[2] as i32) << 8)
+                | (key_size_bytes[3] as i32)) as usize;
             self.offset += 4;
 
             // get value size field, also 4 bytes long and stored in big-endian
             let value_size_bytes = &self.data[self.offset..(self.offset + 4)];
-            let value_size = ((value_size_bytes[0] << 24)
-                | (value_size_bytes[1] << 16)
-                | (value_size_bytes[2] << 8)
-                | (value_size_bytes[3])) as usize;
+            let value_size = (((value_size_bytes[0] as i32) << 24)
+                | ((value_size_bytes[1] as i32) << 16)
+                | ((value_size_bytes[2] as i32) << 8)
+                | (value_size_bytes[3] as i32)) as usize;
             self.offset += 4;
 
             let key = str::from_utf8(&self.data[self.offset..(self.offset + key_size)]).ok()?;
@@ -98,7 +99,7 @@ impl DiskMap {
         let mut buf = [0u8; 1024];
         let mut v: Vec<u8> = Vec::new();
 
-        let lock = fcntl::Flock::lock(fd, FlockArg::LockShared).map_err(|(_, e)| e)?;
+        let lock = fcntl::Flock::lock(fd, nix::fcntl::FlockArg::LockShared).map_err(|(_, e)| e)?;
         loop {
             let n = unistd::read(lock.as_fd(), &mut buf)?;
             if n == 0 {
@@ -117,22 +118,48 @@ impl DiskMap {
     }
 
     fn append_key(fd: os::fd::OwnedFd, k: &str, v: &str) -> Result<usize, Box<dyn error::Error>> {
-        //// acquire exclusive lock
-        //let lock = fcntl::Flock::lock(fd, FlockArg::LockExclusive).map_err(|(_, e)| e)?;
+        // acquire exclusive lock
+        let lock = fcntl::Flock::lock(fd, fcntl::FlockArg::LockExclusive).map_err(|(_, e)| e)?;
 
-        //thread::sleep(time::Duration::from_secs(11));
+        if unsafe { libc::lseek(lock.as_raw_fd(), 0, libc::SEEK_END) } == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
 
-        //// self.truncate file
-        //unistd::ftruncate(lock.as_fd(), 0)?;
+        // create Entry  [0u8] + [k.len() as u32]  + [v.len() as u32] + [k] + [v]
+        let klen: u32 = k.len().try_into()?;
+        let key_size_bytes: [u8; 4] = [
+            ((klen >> 24) as u8),
+            ((klen >> 16) as u8),
+            ((klen >> 8) as u8),
+            (klen as u8),
+        ];
+        let vlen: u32 = v.len().try_into()?;
+        let value_size_bytes: [u8; 4] = [
+            ((vlen >> 24) as u8),
+            ((vlen >> 16) as u8),
+            ((vlen >> 8) as u8),
+            (vlen as u8),
+        ];
+        let mut buf = Vec::<u8>::with_capacity(
+            1 + key_size_bytes.len() + value_size_bytes.len() + k.len() + v.len(),
+        );
+        buf.extend_from_slice(&[0u8; 1]);
+        buf.extend_from_slice(&key_size_bytes);
+        buf.extend_from_slice(&value_size_bytes);
+        buf.extend_from_slice(k.as_bytes());
+        buf.extend_from_slice(v.as_bytes());
 
-        //// write
-        //let n = unistd::write(lock.as_fd(), s.view())?;
+        let buf_ptr = buf.as_ptr() as *const ffi::c_void;
+        if unsafe { libc::write(lock.as_raw_fd(), buf_ptr, buf.len()) } == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
 
-        //// release lock
-        //let _ = lock.unlock().map_err(|(_, e)| e)?;
+        // release lock
+        let _ = lock.unlock().map_err(|(_, e)| e)?;
 
         Ok(123)
     }
+
     fn delete_entry(
         fd: os::fd::OwnedFd,
         entry: Entry,
@@ -190,7 +217,7 @@ impl DiskMap {
         match unsafe { unistd::fork() } {
             Ok(unistd::ForkResult::Parent { child, .. }) => {
                 // we don't need to write as a parent, just read
-                close(w)?;
+                unistd::close(w)?;
                 // wait for our child to terminate
                 nix::sys::wait::waitpid(child, None)?;
                 // read from our child
@@ -209,10 +236,10 @@ impl DiskMap {
             }
             Ok(unistd::ForkResult::Child) => {
                 // we don't need to read as a child, just write
-                close(r)?;
+                unistd::close(r)?;
                 // make a copy our writing fd. it should be given the same fd as stdout. so when
                 // someone writes to stdout, it will write to the same destination as `w`
-                dup2_stdout(w)?;
+                unistd::dup2_stdout(w)?;
                 // execv
                 let path = ffi::CString::new("/usr/bin/wc")?;
                 let arg1 = ffi::CString::new("-c")?;

@@ -8,9 +8,6 @@ mod store;
 static mut SELF_PIPE_WRITE: i32 = -1;
 
 extern "C" fn handle_signal(signal_no: libc::c_int) {
-    //let msg = "at signal handler!";
-    //let len = msg.len() as libc::size_t;
-    //unsafe { libc::write(1, msg.as_ptr() as *const ffi::c_void, len) };
     if unsafe { SELF_PIPE_WRITE } == -1 {
         return;
     }

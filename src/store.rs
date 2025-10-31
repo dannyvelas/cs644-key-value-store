@@ -1,19 +1,73 @@
+/*
+ *  [08#9#asdfasdfasdfasdfg][08#9#asdfasdfasdfasdfg][08#9#asdfasdfasdfasdfg][08#9#asdfasdfasdfasdfg]
+ */
 extern crate flexbuffers;
 
-use flexbuffers::FlexbufferSerializer;
 use nix::fcntl::OFlag;
 use nix::fcntl::{self, FlockArg};
 use nix::sys::stat::Mode;
 use nix::unistd::{self, close, dup2_stdout};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::os::fd::AsFd;
-use std::{error, ffi, os, process, thread, time};
+use std::{error, ffi, mem, os, process};
 
-pub struct ReadResult {
+struct ReadResult {
+    offset: usize,
     fd: os::fd::OwnedFd,
-    m: HashMap<String, String>,
+    data: Vec<u8>,
+}
+
+impl Iterator for ReadResult {
+    type Item = Entry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // increment offset until this is no longer deleted
+        while self.offset < self.data.len() {
+            let start = self.offset;
+
+            // get is_deleted byte, one byte long
+            let is_deleted = self.data[self.offset] == 0;
+            self.offset += 1;
+
+            // get key size field, it is 4 bytes long and stored in big-endian
+            // if number is 0xCAFEBABE, it is stored as CA FE BA BE
+            let key_size_bytes = &self.data[self.offset..(self.offset + 4)];
+            let key_size = ((key_size_bytes[0] << 24)
+                | (key_size_bytes[1] << 16)
+                | (key_size_bytes[2] << 8)
+                | (key_size_bytes[3])) as usize;
+            self.offset += 4;
+
+            // get value size field, also 4 bytes long and stored in big-endian
+            let value_size_bytes = &self.data[self.offset..(self.offset + 4)];
+            let value_size = ((value_size_bytes[0] << 24)
+                | (value_size_bytes[1] << 16)
+                | (value_size_bytes[2] << 8)
+                | (value_size_bytes[3])) as usize;
+            self.offset += 4;
+
+            let key = str::from_utf8(&self.data[self.offset..(self.offset + key_size)]).ok()?;
+            self.offset += key_size;
+            let value = str::from_utf8(&self.data[self.offset..(self.offset + value_size)]).ok()?;
+            self.offset += value_size;
+
+            if !is_deleted {
+                return Some(Entry {
+                    offset: start,
+                    key: key.to_owned(),
+                    value: value.to_owned(),
+                });
+            }
+        }
+        return None;
+    }
+}
+
+struct Entry {
+    offset: usize,
+    key: String,
+    value: String,
 }
 
 pub struct DiskMap {
@@ -27,26 +81,20 @@ impl DiskMap {
         })
     }
 
-    fn read(&self) -> Result<ReadResult, Box<dyn error::Error>> {
+    fn find_key(&self, data: &[u8]) -> Option<Entry> {
+        Some(Entry {
+            offset: 1,
+            key: String::from("hi"),
+            value: String::from("bye"),
+        })
+    }
+
+    fn read_lock(&self) -> Result<ReadResult, Box<dyn error::Error>> {
         let fd = fcntl::open(
             self.file_path.deref(),
             OFlag::O_RDWR | OFlag::O_CREAT,
             Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH,
         )?;
-
-        let (new_fd, data) = DiskMap::read_lock(fd)?;
-
-        let m = if data.is_empty() {
-            HashMap::new()
-        } else {
-            let reader = flexbuffers::Reader::get_root(&data[..])?;
-            HashMap::deserialize(reader)?
-        };
-
-        Ok(ReadResult { fd: new_fd, m })
-    }
-
-    fn read_lock(fd: os::fd::OwnedFd) -> Result<(os::fd::OwnedFd, Vec<u8>), Box<dyn error::Error>> {
         let mut buf = [0u8; 1024];
         let mut v: Vec<u8> = Vec::new();
 
@@ -61,54 +109,80 @@ impl DiskMap {
         }
         let new_fd = lock.unlock().map_err(|(_, e)| e)?;
 
-        Ok((new_fd, v))
+        Ok(ReadResult {
+            offset: 0,
+            fd: new_fd,
+            data: v,
+        })
     }
 
-    fn write_lock(
+    fn append_key(fd: os::fd::OwnedFd, k: &str, v: &str) -> Result<usize, Box<dyn error::Error>> {
+        //// acquire exclusive lock
+        //let lock = fcntl::Flock::lock(fd, FlockArg::LockExclusive).map_err(|(_, e)| e)?;
+
+        //thread::sleep(time::Duration::from_secs(11));
+
+        //// self.truncate file
+        //unistd::ftruncate(lock.as_fd(), 0)?;
+
+        //// write
+        //let n = unistd::write(lock.as_fd(), s.view())?;
+
+        //// release lock
+        //let _ = lock.unlock().map_err(|(_, e)| e)?;
+
+        Ok(123)
+    }
+    fn delete_entry(
         fd: os::fd::OwnedFd,
-        s: FlexbufferSerializer,
-    ) -> Result<usize, Box<dyn error::Error>> {
-        // acquire exclusive lock
-        let lock = fcntl::Flock::lock(fd, FlockArg::LockExclusive).map_err(|(_, e)| e)?;
+        entry: Entry,
+    ) -> Result<os::fd::OwnedFd, Box<dyn error::Error>> {
+        //// acquire exclusive lock
+        //let lock = fcntl::Flock::lock(fd, FlockArg::LockExclusive).map_err(|(_, e)| e)?;
 
-        thread::sleep(time::Duration::from_secs(11));
+        //thread::sleep(time::Duration::from_secs(11));
 
-        // self.truncate file
-        unistd::ftruncate(lock.as_fd(), 0)?;
+        //// self.truncate file
+        //unistd::ftruncate(lock.as_fd(), 0)?;
 
-        // write
-        let n = unistd::write(lock.as_fd(), s.view())?;
+        //// write
+        //let n = unistd::write(lock.as_fd(), s.view())?;
 
-        // release lock
-        let _ = lock.unlock().map_err(|(_, e)| e)?;
+        //// release lock
+        //let _ = lock.unlock().map_err(|(_, e)| e)?;
 
-        Ok(n)
+        let fd: os::fd::OwnedFd = unsafe { mem::zeroed() };
+
+        Ok(fd)
     }
 
     pub fn set(&self, k: &str, v: &str) -> Result<usize, Box<dyn error::Error>> {
-        let mut read_result = self.read()?;
+        let read_result = self.read_lock()?;
 
-        // set new values
-        read_result.m.insert(k.to_string(), v.to_string());
+        let fd = if let Some(entry) = self.find_key(&read_result.data) {
+            DiskMap::delete_entry(read_result.fd, entry)?
+        } else {
+            read_result.fd
+        };
 
-        // serialize hashmap
-        let mut s = flexbuffers::FlexbufferSerializer::new();
-        read_result.m.serialize(&mut s)?;
-
-        // consume and replace fd
-        let n = DiskMap::write_lock(read_result.fd, s)?;
-
-        Ok(n)
+        DiskMap::append_key(fd, k, v)
     }
 
     pub fn get(&self, k: &str) -> Result<String, Box<dyn error::Error>> {
-        let read_result = self.read()?;
-        Ok(read_result.m.get(k).ok_or("not found")?.to_owned())
+        let read_result = self.read_lock()?;
+        Ok(self
+            .find_key(&read_result.data)
+            .ok_or(format!("{k} not found"))?
+            .value)
     }
 
     pub fn dump(&self) -> Result<HashMap<String, String>, Box<dyn error::Error>> {
-        let read_result = self.read()?;
-        Ok(read_result.m)
+        let read_result = self.read_lock()?;
+        let mut m = HashMap::<String, String>::new();
+        for entry in read_result {
+            m.insert(entry.key, entry.value);
+        }
+        Ok(m)
     }
 
     pub fn size(&self) -> Result<String, Box<dyn error::Error>> {

@@ -63,7 +63,7 @@ impl TCPServer {
     }
 
     fn accept_signal(&self, signal_fd: i32) -> Result<(), Box<dyn error::Error>> {
-        let mut buf: [char; 1] = ['\0'; 1];
+        let mut buf = ['\0'; 1];
         let len = buf.len() as libc::size_t;
         match unsafe { libc::read(signal_fd, buf.as_mut_ptr().cast(), len) } {
             0 => Err("read 0 bytes from signal pipe...somehow".into()),

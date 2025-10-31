@@ -19,7 +19,7 @@ extern "C" fn handle_signal(signal_no: libc::c_int) {
 
 fn main() -> Result<(), Box<dyn error::Error>> {
     // signal stuff
-    let mut pipefd: [i32; 2] = [0; 2];
+    let mut pipefd = [0i32; 2];
     unsafe {
         libc::pipe2(pipefd.as_mut_ptr(), libc::O_NONBLOCK);
         SELF_PIPE_WRITE = pipefd[1];

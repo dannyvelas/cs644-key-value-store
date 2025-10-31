@@ -23,13 +23,10 @@ impl TCPServer {
         if unsafe { libc::listen(sock_fd, 128) } != 0 {
             return Err("error calling listen".into());
         }
-        println!("AFTER LISTEN");
 
         // set up epoll
         let epoll_fd = unsafe { libc::epoll_create(1) };
-        println!("AFTER CREATE EPOLL");
         TCPServer::setup_epoll(epoll_fd, signal_fd, sock_fd)?;
-        println!("AFTER SETUP");
 
         const MAX_EVENTS: usize = 256;
         let mut events: [libc::epoll_event; MAX_EVENTS] = unsafe { mem::zeroed() };
@@ -57,7 +54,6 @@ impl TCPServer {
     ) -> Result<(), Box<dyn error::Error>> {
         let fd = event.u64 as i32;
         if fd == signal_fd {
-            println!("accepting signal!");
             self.accept_signal(signal_fd)
         } else if fd == sock_fd {
             self.accept_conn(sock_fd)

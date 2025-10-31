@@ -45,10 +45,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     // define handlers
     let handler = Box::new(handler::DiskHandler::new(disk_map));
-    println!("AFTER HANDLER");
 
     // start server
     let tcp_server = net::server::TCPServer::new(handler);
-    println!("AFTER NEW SERVER");
     tcp_server.start(pipefd[0], "8080")
 }

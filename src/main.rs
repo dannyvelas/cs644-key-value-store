@@ -1,78 +1,48 @@
-use std::{error, io, mem, os, ptr};
+use std::{error, ffi, io, mem, ptr};
 
 use nix::libc;
-
 mod handler;
 mod net;
 mod store;
 
-fn signal() -> Result<(), io::Error> {
-    #[cfg(target_os = "linux")]
-    unsafe {
-        // define set of SIGUSR1 and mask it
-        let mut set: libc::sigset_t = mem::zeroed();
-        libc::sigemptyset(&mut set);
-        libc::sigaddset(&mut set, libc::SIGUSR1);
-        if libc::sigprocmask(libc::SIG_BLOCK, &set, ptr::null_mut()) == -1 {
-            return Err(io::Error::last_os_error().into());
-        }
+static mut SELF_PIPE_WRITE: i32 = -1;
 
-        // get a new file descriptor that will be used to read signals
-        let sigfd = libc::signalfd(-1, &set, 0);
-        if sigfd == -1 {
-            return Err(io::Error::last_os_error());
-        }
-
-        // define set of descriptors that we can listen to
-        let mut readfds: libc::fd_set = mem::zeroed();
-        libc::FD_ZERO(&mut readfds);
-        libc::FD_SET(sigfd, &mut readfds);
-        let desc = libc::select(
-            sigfd + 1,
-            &mut readfds,
-            ptr::null_mut(), // writefds
-            ptr::null_mut(), // errorfds
-            ptr::null_mut(), // timeout (block indefinitely)
-        );
-        if desc == -1 {
-            return Err(io::Error::last_os_error().into());
-        }
-
-        println!("select returned");
-        if libc::FD_ISSET(sigfd, &readfds) {
-            let mut info: libc::signalfd_siginfo = mem::zeroed();
-            if libc::read(
-                sigfd,
-                &mut info as *mut _ as *mut os::raw::c_void,
-                mem::size_of::<libc::signalfd_siginfo>(),
-            ) == -1
-            {
-                return Err(io::Error::last_os_error().into());
-            }
-
-            match info.ssi_signo as i32 {
-                libc::SIGUSR1 => println!("received SIGUSR1 signal"),
-                _ => println!("received {} signal", info.ssi_signo),
-            }
-        }
-        Ok(())
+extern "C" fn handle_signal(signal_no: libc::c_int) {
+    if unsafe { SELF_PIPE_WRITE } == -1 {
+        return;
     }
 
-    #[cfg(not(target_os = "linux"))]
-    Ok(())
+    let buf: [char; 1] = [signal_no as u8 as char];
+    unsafe { libc::write(SELF_PIPE_WRITE, buf.as_ptr() as *const ffi::c_void, 1) };
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
     // signal stuff
-    signal()?;
+    let mut pipefd: [i32; 2] = [0; 2];
+    unsafe {
+        libc::pipe(pipefd.as_mut_ptr());
+        SELF_PIPE_WRITE = pipefd[1];
+
+        // register handler
+        let mut action = libc::sigaction {
+            sa_sigaction: handle_signal as usize,
+            sa_mask: mem::zeroed(),
+            sa_flags: 0,
+            sa_restorer: mem::zeroed(),
+        };
+        libc::sigemptyset(&mut action.sa_mask);
+        if libc::sigaction(libc::SIGTERM, &action, ptr::null_mut()) == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
+    }
 
     // define deps
     let disk_map = store::DiskMap::new("/tmp/map")?;
 
     // define handlers
-    let handler: Box<dyn net::types::Handler> = Box::new(handler::DiskHandler::new(disk_map));
+    let handler = Box::new(handler::DiskHandler::new(disk_map));
 
     // start server
     let tcp_server = net::server::TCPServer::new(handler);
-    tcp_server.start("8080")
+    tcp_server.start(pipefd[0], "8080")
 }

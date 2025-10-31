@@ -17,15 +17,35 @@ impl TCPServer {
         TCPServer { handler }
     }
 
-    pub fn start(&self, port: &str) -> Result<(), Box<dyn error::Error>> {
+    pub fn start(&self, signal_fd: i32, port: &str) -> Result<(), Box<dyn error::Error>> {
         let sock_fd = TCPServer::local_sockfd(port)?;
 
         if unsafe { libc::listen(sock_fd, 128) } != 0 {
             return Err("error calling listen".into());
         }
 
+        // set up epoll
+        unsafe {
+            let epoll_fd = libc::epoll_create(1);
+            let mut signal_ev = libc::epoll_event {
+                events: libc::EPOLLIN as u32,
+                u64: signal_fd as u64,
+            };
+            if libc::epoll_ctl(epoll_fd, libc::EPOLL_CTL_ADD, signal_fd, &mut signal_ev) == -1 {
+                return Err(io::Error::last_os_error().into());
+            }
+
+            let mut sock_ev = libc::epoll_event {
+                events: libc::EPOLLIN as u32,
+                u64: sock_fd as u64,
+            };
+            if libc::epoll_ctl(epoll_fd, libc::EPOLL_CTL_ADD, signal_fd, &mut sock_ev) == -1 {
+                return Err(io::Error::last_os_error().into());
+            }
+        }
+
         let mut address = libc::sockaddr {
-            sa_len: 0,
+            //sa_len: 0,
             sa_family: 0,
             sa_data: [0; 14],
         };

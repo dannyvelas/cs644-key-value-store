@@ -25,14 +25,81 @@ impl TCPServer {
         }
 
         // set up epoll
+        let epoll_fd = unsafe { libc::epoll_create(1) };
+        TCPServer::setup_epoll(epoll_fd, signal_fd, sock_fd)?;
+
+        const MAX_EVENTS: usize = 256;
+        let mut events: [libc::epoll_event; MAX_EVENTS] = unsafe { mem::zeroed() };
+        loop {
+            let count =
+                unsafe { libc::epoll_wait(epoll_fd, events.as_mut_ptr(), MAX_EVENTS as i32, -1) };
+            if count == -1 {
+                return Err("got -1 from epoll_wait".into());
+            }
+            for i in 0..count as usize {
+                self.handle_event(events[i], signal_fd, sock_fd)?;
+            }
+        }
+    }
+
+    fn handle_event(
+        &self,
+        event: libc::epoll_event,
+        signal_fd: i32,
+        sock_fd: i32,
+    ) -> Result<(), Box<dyn error::Error>> {
+        let fd = event.u64 as i32;
+        if fd == signal_fd {
+            self.accept_signal(signal_fd)
+        } else if fd == sock_fd {
+            self.accept_conn(sock_fd)
+        } else {
+            Err(format!("received unexpected event of fd: {}", fd).into())
+        }
+    }
+
+    fn accept_signal(&self, signal_fd: i32) -> Result<(), Box<dyn error::Error>> {
+        let mut buf: [char; 1] = ['\0'; 1];
+        let len = buf.len() as libc::size_t;
+        match unsafe { libc::read(signal_fd, buf.as_mut_ptr().cast(), len) } {
+            0 => Err("read 0 bytes from signal pipe...somehow".into()),
+            -1 => Err(io::Error::last_os_error().into()),
+            signal => {
+                println!("received {}", signal);
+                Ok(())
+            }
+        }
+    }
+
+    fn accept_conn(&self, sock_fd: i32) -> Result<(), Box<dyn error::Error>> {
+        let conn = unsafe { libc::accept(sock_fd, ptr::null_mut(), ptr::null_mut()) };
+        if conn == -1 {
+            return Err("connection was -1".into());
+        }
+
+        // spawn thread
+        match unsafe {
+            let mut native: libc::pthread_t = mem::zeroed();
+            let boxed_args = Box::new(ConnectionCtx { server: self, conn });
+            let arg_ptr = Box::into_raw(boxed_args) as *mut ffi::c_void;
+            libc::pthread_create(&mut native, ptr::null(), TCPServer::handle_c, arg_ptr)
+        } {
+            0 => Ok(()),
+            libc::EAGAIN => Err("insufficient resources".into()),
+            libc::EINVAL => Err("invalid settings in attr".into()),
+            libc::EPERM => Err("insufficient permissions".into()),
+            ret => Err(format!("unexpected return value: {}", ret).into()),
+        }
+    }
+
+    fn setup_epoll(epoll_fd: i32, signal_fd: i32, sock_fd: i32) -> Result<(), io::Error> {
         unsafe {
-            let epoll_fd = libc::epoll_create(1);
             let mut signal_ev = libc::epoll_event {
                 events: libc::EPOLLIN as u32,
                 u64: signal_fd as u64,
             };
             if libc::epoll_ctl(epoll_fd, libc::EPOLL_CTL_ADD, signal_fd, &mut signal_ev) == -1 {
-                return Err(io::Error::last_os_error().into());
+                return Err(io::Error::last_os_error());
             }
 
             let mut sock_ev = libc::epoll_event {
@@ -40,42 +107,10 @@ impl TCPServer {
                 u64: sock_fd as u64,
             };
             if libc::epoll_ctl(epoll_fd, libc::EPOLL_CTL_ADD, signal_fd, &mut sock_ev) == -1 {
-                return Err(io::Error::last_os_error().into());
+                return Err(io::Error::last_os_error());
             }
         }
-
-        let mut address = libc::sockaddr {
-            //sa_len: 0,
-            sa_family: 0,
-            sa_data: [0; 14],
-        };
-        let mut address_len: libc::socklen_t = 0;
-        loop {
-            let conn = unsafe {
-                libc::accept(
-                    sock_fd,
-                    &mut address as *mut libc::sockaddr,
-                    &mut address_len as *mut libc::socklen_t,
-                )
-            };
-            if conn == -1 {
-                return Err("connection was -1".into());
-            }
-
-            // spawn thread
-            match unsafe {
-                let mut native: libc::pthread_t = mem::zeroed();
-                let boxed_args = Box::new(ConnectionCtx { server: self, conn });
-                let arg_ptr = Box::into_raw(boxed_args) as *mut ffi::c_void;
-                libc::pthread_create(&mut native, ptr::null(), TCPServer::handle_c, arg_ptr)
-            } {
-                0 => continue,
-                libc::EAGAIN => return Err("insufficient resources".into()),
-                libc::EINVAL => return Err("invalid settings in attr".into()),
-                libc::EPERM => return Err("insufficient permissions".into()),
-                ret => return Err(format!("unexpected return value: {}", ret).into()),
-            }
-        }
+        Ok(())
     }
 
     fn local_sockfd(port: &str) -> Result<i32, Box<dyn error::Error>> {

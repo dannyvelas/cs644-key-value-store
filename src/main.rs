@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     // signal stuff
     let mut pipefd: [i32; 2] = [0; 2];
     unsafe {
-        libc::pipe(pipefd.as_mut_ptr());
+        libc::pipe2(pipefd.as_mut_ptr(), libc::O_NONBLOCK);
         SELF_PIPE_WRITE = pipefd[1];
 
         // register handler

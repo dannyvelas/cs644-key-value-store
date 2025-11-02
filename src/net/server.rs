@@ -233,7 +233,7 @@ impl TCPServer {
     fn handle_connection(&self, conn: i32) -> Result<(), Box<dyn error::Error>> {
         loop {
             // show prompt
-            let mut p = String::from("\n~> ");
+            let mut p = String::from("~> ");
             if unsafe { libc::write(conn, p.as_mut_ptr().cast(), p.len() as libc::size_t) } == -1
                 && let Err(err) = TCPServer::close_fd(conn, Some(io::Error::last_os_error()))
             {
@@ -253,8 +253,15 @@ impl TCPServer {
             }
             let bytes = &buf[..n as usize];
 
+            let input = str::from_utf8(bytes)?.trim();
+            if input == "" {
+                continue;
+            } else if input == "quit" || input == "exit" {
+                break;
+            }
+
             // process
-            let mut out = self.handler.handle(bytes);
+            let mut out = self.handler.handle(input);
 
             // write output
             if unsafe { libc::write(conn, out.as_mut_ptr().cast(), out.len() as libc::size_t) }
@@ -263,6 +270,10 @@ impl TCPServer {
             {
                 return Err(err.into());
             }
+        }
+        let msg = "client has closed socket. now closing on server side.\n".as_bytes();
+        unsafe {
+            libc::write(conn, msg.as_ptr().cast(), msg.len() as libc::size_t);
         }
         TCPServer::close_fd(conn, None)?;
         Ok(())

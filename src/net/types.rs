@@ -1,3 +1,3 @@
 pub trait Handler {
-    fn handle(&self, s: &[u8]) -> Vec<u8>;
+    fn handle(&self, s: &str) -> String;
 }

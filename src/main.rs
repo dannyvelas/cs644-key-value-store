@@ -1,4 +1,4 @@
-use std::{error, ffi, io, mem, ptr};
+use std::{error, io, mem, ptr};
 
 use nix::libc;
 mod handler;
@@ -12,9 +12,8 @@ extern "C" fn handle_signal(signal_no: libc::c_int) {
         return;
     }
 
-    let buf: [char; 1] = [signal_no as u8 as char];
-    let len = buf.len() as libc::size_t;
-    unsafe { libc::write(SELF_PIPE_WRITE, buf.as_ptr() as *const ffi::c_void, len) };
+    let buf: [u8; 1] = [signal_no as u8];
+    unsafe { libc::write(SELF_PIPE_WRITE, buf.as_ptr().cast(), buf.len()) };
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
@@ -33,6 +32,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         };
         libc::sigemptyset(&mut action.sa_mask);
         if libc::sigaction(libc::SIGUSR1, &action, ptr::null_mut()) == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
+
+        if libc::sigaction(libc::SIGINT, &action, ptr::null_mut()) == -1 {
             return Err(io::Error::last_os_error().into());
         }
     }

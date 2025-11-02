@@ -40,10 +40,27 @@ impl TCPServer {
                 }
                 return Err(format!("got -1 from epoll_wait: {}", last_err).into());
             }
-            for i in 0..count as usize {
-                self.handle_event(events[i], signal_fd, sock_fd)?;
+            if let Err(err) = self.handle_events(&events, count, signal_fd, sock_fd) {
+                eprintln!("{err}");
+                break;
             }
         }
+        unsafe { libc::close(sock_fd) };
+        Ok(())
+    }
+
+    fn handle_events(
+        &self,
+        events: &[libc::epoll_event],
+        count: i32,
+        signal_fd: i32,
+        sock_fd: i32,
+    ) -> Result<(), Box<dyn error::Error>> {
+        for i in 0..count as usize {
+            // TODO: is it too pesimistic to return on error here?
+            self.handle_event(events[i], signal_fd, sock_fd)?
+        }
+        Ok(())
     }
 
     fn handle_event(
@@ -63,11 +80,16 @@ impl TCPServer {
     }
 
     fn accept_signal(&self, signal_fd: i32) -> Result<(), Box<dyn error::Error>> {
-        let mut buf = ['\0'; 1];
+        let mut buf = [0u8; 1];
         let len = buf.len() as libc::size_t;
-        match unsafe { libc::read(signal_fd, buf.as_mut_ptr().cast(), len) } {
-            0 => Err("read 0 bytes from signal pipe...somehow".into()),
-            -1 => Err(io::Error::last_os_error().into()),
+        let read = unsafe { libc::read(signal_fd, buf.as_mut_ptr().cast(), len) };
+        if read == -1 {
+            return Err::<(), Box<dyn error::Error>>(io::Error::last_os_error().into());
+        } else if read == 0 {
+            return Err("read 0 bytes from signal pipe...somehow".into());
+        };
+        match buf[0] {
+            2 => Err("received SIGINT".into()),
             signal => {
                 println!("received {}", signal);
                 Ok(())

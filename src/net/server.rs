@@ -3,6 +3,11 @@ use std::{error, ffi, io, mem, ptr};
 
 use crate::net::types::Handler;
 
+enum EpollErr {
+    EINTR,
+    UnexpectedErr(Box<dyn error::Error>),
+}
+
 pub struct ConnectionCtx<'a> {
     server: &'a TCPServer,
     conn: i32,
@@ -28,37 +33,45 @@ impl TCPServer {
         let epoll_fd = unsafe { libc::epoll_create(1) };
         TCPServer::setup_epoll(epoll_fd, signal_fd, sock_fd)?;
 
-        const MAX_EVENTS: usize = 256;
-        let mut events: [libc::epoll_event; MAX_EVENTS] = unsafe { mem::zeroed() };
+        const MAX_EVENTS: i32 = 256;
+        let mut events: [libc::epoll_event; MAX_EVENTS as usize] = unsafe { mem::zeroed() };
         loop {
-            let count =
-                unsafe { libc::epoll_wait(epoll_fd, events.as_mut_ptr(), MAX_EVENTS as i32, -1) };
-            if count == -1 {
-                let last_err = io::Error::last_os_error();
-                if last_err.raw_os_error() == Some(libc::EINTR) {
-                    continue;
+            match self.handle_events(epoll_fd, &mut events, MAX_EVENTS, signal_fd, sock_fd) {
+                Ok(()) | Err(EpollErr::EINTR) => continue,
+                Err(EpollErr::UnexpectedErr(err)) => {
+                    eprintln!("{err}");
+                    break;
                 }
-                return Err(format!("got -1 from epoll_wait: {}", last_err).into());
-            }
-            if let Err(err) = self.handle_events(&events, count, signal_fd, sock_fd) {
-                eprintln!("{err}");
-                break;
             }
         }
+        eprintln!("closing socket");
         unsafe { libc::close(sock_fd) };
         Ok(())
     }
 
     fn handle_events(
         &self,
-        events: &[libc::epoll_event],
-        count: i32,
+        epoll_fd: i32,
+        events: &mut [libc::epoll_event],
+        max_events: i32,
         signal_fd: i32,
         sock_fd: i32,
-    ) -> Result<(), Box<dyn error::Error>> {
+    ) -> Result<(), EpollErr> {
+        let count = unsafe { libc::epoll_wait(epoll_fd, events.as_mut_ptr(), max_events, -1) };
+        if count == -1 {
+            let last_err = io::Error::last_os_error();
+            if last_err.raw_os_error() == Some(libc::EINTR) {
+                return Err(EpollErr::EINTR);
+            }
+            return Err(EpollErr::UnexpectedErr(
+                format!("got -1 from epoll_wait: {}", last_err).into(),
+            ));
+        }
+
         for i in 0..count as usize {
-            // TODO: is it too pesimistic to return on error here?
-            self.handle_event(events[i], signal_fd, sock_fd)?
+            if let Err(err) = self.handle_event(events[i], signal_fd, sock_fd) {
+                return Err(EpollErr::UnexpectedErr(err));
+            }
         }
         Ok(())
     }
@@ -84,7 +97,7 @@ impl TCPServer {
         let len = buf.len() as libc::size_t;
         let read = unsafe { libc::read(signal_fd, buf.as_mut_ptr().cast(), len) };
         if read == -1 {
-            return Err::<(), Box<dyn error::Error>>(io::Error::last_os_error().into());
+            return Err(io::Error::last_os_error().into());
         } else if read == 0 {
             return Err("read 0 bytes from signal pipe...somehow".into());
         };

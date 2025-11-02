@@ -150,7 +150,7 @@ impl DiskMap {
         let mut buf = Vec::<u8>::with_capacity(
             1 + key_size_bytes.len() + value_size_bytes.len() + k.len() + v.len(),
         );
-        buf.extend_from_slice(&[0u8; 1]);
+        buf.extend_from_slice(&[1u8; 1]);
         buf.extend_from_slice(&key_size_bytes);
         buf.extend_from_slice(&value_size_bytes);
         buf.extend_from_slice(k.as_bytes());

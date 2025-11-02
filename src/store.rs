@@ -3,19 +3,14 @@
  */
 extern crate flexbuffers;
 
-use nix::fcntl;
-use nix::fcntl::OFlag;
-use nix::libc;
-use nix::sys::stat::Mode;
-use nix::unistd;
+use nix::{fcntl, fcntl::OFlag, libc, sys, sys::stat::Mode, unistd};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::os::fd::{AsFd, AsRawFd};
-use std::{error, ffi, io, mem, os, process};
+use std::{error, ffi, io, os, process};
 
 struct ReadResult {
     offset: usize,
-    fd: os::fd::OwnedFd,
     data: Vec<u8>,
 }
 
@@ -93,38 +88,41 @@ impl DiskMap {
         })
     }
 
-    fn read_lock(&self) -> Result<ReadResult, Box<dyn error::Error>> {
-        let fd = fcntl::open(
-            self.file_path.deref(),
-            OFlag::O_RDWR | OFlag::O_CREAT,
-            Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH,
-        )?;
+    fn slurp(fd: os::fd::BorrowedFd) -> Result<ReadResult, Box<dyn error::Error>> {
         let mut buf = [0u8; 1024];
         let mut v: Vec<u8> = Vec::new();
-
-        let lock = fcntl::Flock::lock(fd, nix::fcntl::FlockArg::LockShared).map_err(|(_, e)| e)?;
         loop {
-            let n = unistd::read(lock.as_fd(), &mut buf)?;
+            let n = unistd::read(fd, &mut buf)?;
             if n == 0 {
                 break;
             }
 
             v.extend_from_slice(&buf[..n]);
         }
-        let new_fd = lock.unlock().map_err(|(_, e)| e)?;
-
-        Ok(ReadResult {
-            offset: 0,
-            fd: new_fd,
-            data: v,
-        })
+        Ok(ReadResult { offset: 0, data: v })
     }
 
-    fn append_key(fd: os::fd::OwnedFd, k: &str, v: &str) -> Result<usize, Box<dyn error::Error>> {
-        // acquire exclusive lock
-        let lock = fcntl::Flock::lock(fd, fcntl::FlockArg::LockExclusive).map_err(|(_, e)| e)?;
+    fn read(&self) -> Result<ReadResult, Box<dyn error::Error>> {
+        let fd = fcntl::open(
+            self.file_path.deref(),
+            OFlag::O_RDWR | OFlag::O_CREAT,
+            Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH,
+        )?;
 
-        if unsafe { libc::lseek(lock.as_raw_fd(), 0, libc::SEEK_END) } == -1 {
+        let lock = fcntl::Flock::lock(fd, fcntl::FlockArg::LockShared).map_err(|(_, e)| e)?;
+        let read_result = DiskMap::slurp(lock.as_fd())?;
+        let _ = lock.unlock().map_err(|(_, e)| e)?;
+
+        Ok(read_result)
+    }
+
+    fn append_key(
+        fd: os::fd::BorrowedFd,
+        k: &str,
+        v: &str,
+    ) -> Result<isize, Box<dyn error::Error>> {
+        // seek to end
+        if unsafe { libc::lseek(fd.as_raw_fd(), 0, libc::SEEK_END) } == -1 {
             return Err(io::Error::last_os_error().into());
         }
 
@@ -154,68 +152,68 @@ impl DiskMap {
 
         println!("buf={:?}", buf);
 
-        if unsafe { libc::write(lock.as_raw_fd(), buf.as_ptr().cast(), buf.len()) } == -1 {
+        let n = unsafe { libc::write(fd.as_raw_fd(), buf.as_ptr().cast(), buf.len()) };
+        if n == -1 {
             return Err(io::Error::last_os_error().into());
         }
 
+        Ok(n)
+    }
+
+    fn delete_entry(fd: os::fd::BorrowedFd, entry: Entry) -> Result<(), Box<dyn error::Error>> {
+        // seek to offset
+        if unsafe { libc::lseek(fd.as_raw_fd(), entry.offset as i64, libc::SEEK_SET) } == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
+
+        // overwrite byte to be 0 instead of 1
+        let del = &[0u8; 1];
+        let len = del.len() as libc::size_t;
+        if unsafe { libc::write(fd.as_raw_fd(), del.as_ptr().cast(), len) } == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
+
+        Ok(())
+    }
+
+    pub fn set(&self, k: &str, v: &str) -> Result<isize, Box<dyn error::Error>> {
+        // open file
+        let fd = fcntl::open(
+            self.file_path.deref(),
+            OFlag::O_RDWR | OFlag::O_CREAT,
+            Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH,
+        )?;
+
+        // acquire exclusive lock
+        let lock = fcntl::Flock::lock(fd, fcntl::FlockArg::LockExclusive).map_err(|(_, e)| e)?;
+
+        // read into variable
+        let mut read_result = DiskMap::slurp(lock.as_fd())?;
+
+        // if key exists, delete it
+        if let Some(entry) = read_result.find(|x| x.key == k) {
+            DiskMap::delete_entry(lock.as_fd(), entry)?;
+        }
+
+        // append key
+        let size = DiskMap::append_key(lock.as_fd(), k, v)?;
+
         // release lock
         let _ = lock.unlock().map_err(|(_, e)| e)?;
-
-        Ok(123)
-    }
-
-    fn delete_entry(
-        fd: os::fd::OwnedFd,
-        entry: Entry,
-    ) -> Result<os::fd::OwnedFd, Box<dyn error::Error>> {
-        //// acquire exclusive lock
-        //let lock = fcntl::Flock::lock(fd, FlockArg::LockExclusive).map_err(|(_, e)| e)?;
-
-        //thread::sleep(time::Duration::from_secs(11));
-
-        //// self.truncate file
-        //unistd::ftruncate(lock.as_fd(), 0)?;
-
-        //// write
-        //let n = unistd::write(lock.as_fd(), s.view())?;
-
-        //// release lock
-        //let _ = lock.unlock().map_err(|(_, e)| e)?;
-
-        let fd: os::fd::OwnedFd = unsafe { mem::zeroed() };
-
-        Ok(fd)
-    }
-
-    pub fn set(&self, k: &str, v: &str) -> Result<usize, Box<dyn error::Error>> {
-        println!("at top of set");
-        let mut read_result = self.read_lock()?;
-        println!("finished reading");
-        let fd = if let Some(entry) = read_result.find(|x| x.key == k) {
-            println!("in if");
-            DiskMap::delete_entry(read_result.fd, entry)?
-        } else {
-            println!("in else");
-            read_result.fd
-        };
-
-        println!("before append");
-        let size = DiskMap::append_key(fd, k, v)?;
-        println!("after append");
 
         Ok(size)
     }
 
     pub fn get(&self, k: &str) -> Result<String, Box<dyn error::Error>> {
         Ok(self
-            .read_lock()?
+            .read()?
             .find(|x| x.key == k)
             .ok_or(format!("{k} not found"))?
             .value)
     }
 
     pub fn dump(&self) -> Result<HashMap<String, String>, Box<dyn error::Error>> {
-        let read_result = self.read_lock()?;
+        let read_result = self.read()?;
 
         let mut m = HashMap::<String, String>::new();
         for entry in read_result {
@@ -231,7 +229,7 @@ impl DiskMap {
                 // we don't need to write as a parent, just read
                 unistd::close(w)?;
                 // wait for our child to terminate
-                nix::sys::wait::waitpid(child, None)?;
+                sys::wait::waitpid(child, None)?;
                 // read from our child
                 let mut buf = [0u8; 1024];
                 let mut v: Vec<u8> = Vec::new();
@@ -257,7 +255,7 @@ impl DiskMap {
                 let arg1 = ffi::CString::new("-c")?;
                 let arg2 = ffi::CString::new(self.file_path.clone())?;
                 let argv = [&path, &arg1, &arg2];
-                let Err(err) = nix::unistd::execv(&path, &argv);
+                let Err(err) = unistd::execv(&path, &argv);
                 // if we're here, it means execv failed. if it succeeded then the code from this process would
                 // have been replaced by now
                 eprintln!("execv failed: {}", err);

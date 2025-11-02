@@ -93,10 +93,6 @@ impl DiskMap {
         })
     }
 
-    fn find_key(&self, data: &[u8]) -> Option<Entry> {
-        None
-    }
-
     fn read_lock(&self) -> Result<ReadResult, Box<dyn error::Error>> {
         let fd = fcntl::open(
             self.file_path.deref(),
@@ -193,9 +189,9 @@ impl DiskMap {
 
     pub fn set(&self, k: &str, v: &str) -> Result<usize, Box<dyn error::Error>> {
         println!("at top of set");
-        let read_result = self.read_lock()?;
+        let mut read_result = self.read_lock()?;
         println!("finished reading");
-        let fd = if let Some(entry) = self.find_key(&read_result.data) {
+        let fd = if let Some(entry) = read_result.find(|x| x.key == k) {
             println!("in if");
             DiskMap::delete_entry(read_result.fd, entry)?
         } else {
@@ -211,10 +207,9 @@ impl DiskMap {
     }
 
     pub fn get(&self, k: &str) -> Result<String, Box<dyn error::Error>> {
-        let read_result = self.read_lock()?;
-
         Ok(self
-            .find_key(&read_result.data)
+            .read_lock()?
+            .find(|x| x.key == k)
             .ok_or(format!("{k} not found"))?
             .value)
     }

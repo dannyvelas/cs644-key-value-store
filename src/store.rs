@@ -94,11 +94,7 @@ impl DiskMap {
     }
 
     fn find_key(&self, data: &[u8]) -> Option<Entry> {
-        Some(Entry {
-            offset: 1,
-            key: String::from("hi"),
-            value: String::from("bye"),
-        })
+        None
     }
 
     fn read_lock(&self) -> Result<ReadResult, Box<dyn error::Error>> {

@@ -1,13 +1,10 @@
-/*
- *  [08#9#asdfasdfasdfasdfg][08#9#asdfasdfasdfasdfg][08#9#asdfasdfasdfasdfg][08#9#asdfasdfasdfasdfg]
- */
 extern crate flexbuffers;
 
 use nix::{fcntl, fcntl::OFlag, libc, sys, sys::stat::Mode, unistd};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::os::fd::{AsFd, AsRawFd};
-use std::{error, ffi, io, os, process};
+use std::{error, ffi, io, os, process, thread, time};
 
 struct ReadResult {
     offset: usize,
@@ -186,6 +183,8 @@ impl DiskMap {
 
         // acquire exclusive lock
         let lock = fcntl::Flock::lock(fd, fcntl::FlockArg::LockExclusive).map_err(|(_, e)| e)?;
+
+        thread::sleep(time::Duration::from_secs(10));
 
         // read into variable
         let mut read_result = DiskMap::slurp(lock.as_fd())?;

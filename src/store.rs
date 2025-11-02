@@ -156,8 +156,9 @@ impl DiskMap {
         buf.extend_from_slice(k.as_bytes());
         buf.extend_from_slice(v.as_bytes());
 
-        let buf_ptr = buf.as_ptr() as *const ffi::c_void;
-        if unsafe { libc::write(lock.as_raw_fd(), buf_ptr, buf.len()) } == -1 {
+        println!("buf={:?}", buf);
+
+        if unsafe { libc::write(lock.as_raw_fd(), buf.as_ptr().cast(), buf.len()) } == -1 {
             return Err(io::Error::last_os_error().into());
         }
 

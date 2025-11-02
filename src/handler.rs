@@ -1,4 +1,4 @@
-use crate::{net::types::Handler, store::DiskMap};
+use crate::{disk::map::DiskMap, net::types::Handler};
 use std::error;
 
 pub struct DiskHandler {

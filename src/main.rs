@@ -1,9 +1,9 @@
 use std::{error, io, mem, ptr};
 
 use nix::libc;
+mod disk;
 mod handler;
 mod net;
-mod store;
 
 static mut SELF_PIPE_WRITE: i32 = -1;
 
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     }
 
     // define deps
-    let disk_map = store::DiskMap::new("/tmp/map")?;
+    let disk_map = disk::map::DiskMap::new("/tmp/map")?;
 
     // define handlers
     let handler = Box::new(handler::DiskHandler::new(disk_map));

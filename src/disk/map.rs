@@ -17,97 +17,6 @@ impl DiskMap {
         })
     }
 
-    fn slurp(fd: os::fd::BorrowedFd) -> Result<reader::ReadResult, Box<dyn error::Error>> {
-        let mut buf = [0u8; 1024];
-        let mut v: Vec<u8> = Vec::new();
-        loop {
-            let n = unistd::read(fd, &mut buf)?;
-            if n == 0 {
-                break;
-            }
-
-            v.extend_from_slice(&buf[..n]);
-        }
-        Ok(reader::ReadResult::new(0, v))
-    }
-
-    fn read(&self) -> Result<reader::ReadResult, Box<dyn error::Error>> {
-        let fd = fcntl::open(
-            self.file_path.deref(),
-            OFlag::O_RDWR | OFlag::O_CREAT,
-            Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH,
-        )?;
-
-        let lock = fcntl::Flock::lock(fd, fcntl::FlockArg::LockShared).map_err(|(_, e)| e)?;
-        let read_result = DiskMap::slurp(lock.as_fd())?;
-        let _ = lock.unlock().map_err(|(_, e)| e)?;
-
-        Ok(read_result)
-    }
-
-    fn append_key(
-        fd: os::fd::BorrowedFd,
-        k: &str,
-        v: &str,
-    ) -> Result<isize, Box<dyn error::Error>> {
-        // seek to end
-        if unsafe { libc::lseek(fd.as_raw_fd(), 0, libc::SEEK_END) } == -1 {
-            return Err(io::Error::last_os_error().into());
-        }
-
-        // create Entry  [0u8] + [k.len() as u32]  + [v.len() as u32] + [k] + [v]
-        let klen: u32 = k.len().try_into()?;
-        let key_size_bytes: [u8; 4] = [
-            ((klen >> 24) as u8),
-            ((klen >> 16) as u8),
-            ((klen >> 8) as u8),
-            (klen as u8),
-        ];
-        let vlen: u32 = v.len().try_into()?;
-        let value_size_bytes: [u8; 4] = [
-            ((vlen >> 24) as u8),
-            ((vlen >> 16) as u8),
-            ((vlen >> 8) as u8),
-            (vlen as u8),
-        ];
-        let mut buf = Vec::<u8>::with_capacity(
-            1 + key_size_bytes.len() + value_size_bytes.len() + k.len() + v.len(),
-        );
-        buf.extend_from_slice(&[1u8; 1]);
-        buf.extend_from_slice(&key_size_bytes);
-        buf.extend_from_slice(&value_size_bytes);
-        buf.extend_from_slice(k.as_bytes());
-        buf.extend_from_slice(v.as_bytes());
-
-        println!("buf={:?}", buf);
-
-        let n = unsafe { libc::write(fd.as_raw_fd(), buf.as_ptr().cast(), buf.len()) };
-        if n == -1 {
-            return Err(io::Error::last_os_error().into());
-        }
-
-        Ok(n)
-    }
-
-    fn delete_entry(
-        fd: os::fd::BorrowedFd,
-        entry: reader::Entry,
-    ) -> Result<(), Box<dyn error::Error>> {
-        // seek to offset
-        if unsafe { libc::lseek(fd.as_raw_fd(), entry.offset as i64, libc::SEEK_SET) } == -1 {
-            return Err(io::Error::last_os_error().into());
-        }
-
-        // overwrite byte to be 0 instead of 1
-        let del = &[0u8; 1];
-        let len = del.len() as libc::size_t;
-        if unsafe { libc::write(fd.as_raw_fd(), del.as_ptr().cast(), len) } == -1 {
-            return Err(io::Error::last_os_error().into());
-        }
-
-        Ok(())
-    }
-
     pub fn set(&self, k: &str, v: &str) -> Result<isize, Box<dyn error::Error>> {
         // open file
         let fd = fcntl::open(
@@ -197,5 +106,96 @@ impl DiskMap {
             }
             Err(err_no) => Err(err_no.into()),
         }
+    }
+
+    fn append_key(
+        fd: os::fd::BorrowedFd,
+        k: &str,
+        v: &str,
+    ) -> Result<isize, Box<dyn error::Error>> {
+        // seek to end
+        if unsafe { libc::lseek(fd.as_raw_fd(), 0, libc::SEEK_END) } == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
+
+        // create Entry  [0u8] + [k.len() as u32]  + [v.len() as u32] + [k] + [v]
+        let klen: u32 = k.len().try_into()?;
+        let key_size_bytes: [u8; 4] = [
+            ((klen >> 24) as u8),
+            ((klen >> 16) as u8),
+            ((klen >> 8) as u8),
+            (klen as u8),
+        ];
+        let vlen: u32 = v.len().try_into()?;
+        let value_size_bytes: [u8; 4] = [
+            ((vlen >> 24) as u8),
+            ((vlen >> 16) as u8),
+            ((vlen >> 8) as u8),
+            (vlen as u8),
+        ];
+        let mut buf = Vec::<u8>::with_capacity(
+            1 + key_size_bytes.len() + value_size_bytes.len() + k.len() + v.len(),
+        );
+        buf.extend_from_slice(&[1u8; 1]);
+        buf.extend_from_slice(&key_size_bytes);
+        buf.extend_from_slice(&value_size_bytes);
+        buf.extend_from_slice(k.as_bytes());
+        buf.extend_from_slice(v.as_bytes());
+
+        println!("buf={:?}", buf);
+
+        let n = unsafe { libc::write(fd.as_raw_fd(), buf.as_ptr().cast(), buf.len()) };
+        if n == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
+
+        Ok(n)
+    }
+
+    fn delete_entry(
+        fd: os::fd::BorrowedFd,
+        entry: reader::Entry,
+    ) -> Result<(), Box<dyn error::Error>> {
+        // seek to offset
+        if unsafe { libc::lseek(fd.as_raw_fd(), entry.offset as i64, libc::SEEK_SET) } == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
+
+        // overwrite byte to be 0 instead of 1
+        let del = &[0u8; 1];
+        let len = del.len() as libc::size_t;
+        if unsafe { libc::write(fd.as_raw_fd(), del.as_ptr().cast(), len) } == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
+
+        Ok(())
+    }
+
+    fn read(&self) -> Result<reader::ReadResult, Box<dyn error::Error>> {
+        let fd = fcntl::open(
+            self.file_path.deref(),
+            OFlag::O_RDWR | OFlag::O_CREAT,
+            Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH,
+        )?;
+
+        let lock = fcntl::Flock::lock(fd, fcntl::FlockArg::LockShared).map_err(|(_, e)| e)?;
+        let read_result = DiskMap::slurp(lock.as_fd())?;
+        let _ = lock.unlock().map_err(|(_, e)| e)?;
+
+        Ok(read_result)
+    }
+
+    fn slurp(fd: os::fd::BorrowedFd) -> Result<reader::ReadResult, Box<dyn error::Error>> {
+        let mut buf = [0u8; 1024];
+        let mut v: Vec<u8> = Vec::new();
+        loop {
+            let n = unistd::read(fd, &mut buf)?;
+            if n == 0 {
+                break;
+            }
+
+            v.extend_from_slice(&buf[..n]);
+        }
+        Ok(reader::ReadResult::new(0, v))
     }
 }

@@ -30,13 +30,8 @@ impl DiskMap {
 
         thread::sleep(time::Duration::from_secs(10));
 
-        // read into variable
-        let mut read_result = DiskMap::slurp(lock.as_fd())?;
-
-        // if key exists, delete it
-        if let Some(entry) = read_result.find(|x| x.key == k) {
-            DiskMap::delete_entry(lock.as_fd(), entry)?;
-        }
+        // delete pre-existing key (if exists)
+        self._delete(lock.as_fd(), k)?;
 
         // append key
         let size = DiskMap::append_key(lock.as_fd(), k, v)?;
@@ -106,6 +101,38 @@ impl DiskMap {
             }
             Err(err_no) => Err(err_no.into()),
         }
+    }
+
+    pub fn delete(&self, k: &str) -> Result<(), Box<dyn error::Error>> {
+        // open file
+        let fd = fcntl::open(
+            self.file_path.deref(),
+            OFlag::O_RDWR | OFlag::O_CREAT,
+            Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH,
+        )?;
+
+        // acquire exclusive lock
+        let lock = fcntl::Flock::lock(fd, fcntl::FlockArg::LockExclusive).map_err(|(_, e)| e)?;
+
+        // delete pre-existing key (if exists)
+        self._delete(lock.as_fd(), k)?;
+
+        // release lock
+        let _ = lock.unlock().map_err(|(_, e)| e)?;
+
+        Ok(())
+    }
+
+    fn _delete(&self, fd: os::fd::BorrowedFd, k: &str) -> Result<(), Box<dyn error::Error>> {
+        // read into variable
+        let mut read_result = DiskMap::slurp(fd)?;
+
+        // if key exists, delete it
+        if let Some(entry) = read_result.find(|x| x.key == k) {
+            DiskMap::delete_entry(fd, entry)?;
+        }
+
+        Ok(())
     }
 
     fn append_key(

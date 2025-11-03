@@ -1,5 +1,5 @@
 ## behavior
-- [ ] add compact function
+- [x] add compact function
 - [ ] make compact function get called by signal
 - [ ] print process id at start of session for user
 

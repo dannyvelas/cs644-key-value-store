@@ -123,7 +123,7 @@ impl DiskMap {
         Ok(())
     }
 
-    pub fn compact(&self) -> Result<(), Box<dyn error::Error>> {
+    pub fn compact(&self) -> Result<isize, Box<dyn error::Error>> {
         // open file
         let fd = fcntl::open(
             self.file_path.deref(),
@@ -145,7 +145,7 @@ impl DiskMap {
         }
 
         // seek to beginning of file
-        if unsafe { libc::lseek(lock.as_raw_fd(), 0, libc::SEEK_END) } == -1 {
+        if unsafe { libc::lseek(lock.as_raw_fd(), 0, libc::SEEK_SET) } == -1 {
             return Err(io::Error::last_os_error().into());
         }
 
@@ -155,10 +155,15 @@ impl DiskMap {
             return Err(io::Error::last_os_error().into());
         }
 
+        // truncate everything after
+        if unsafe { libc::ftruncate(lock.as_raw_fd(), n as i64) } == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
+
         // release lock
         let _ = lock.unlock().map_err(|(_, e)| e)?;
 
-        Ok(())
+        Ok(n)
     }
 
     fn _delete(&self, fd: os::fd::BorrowedFd, k: &str) -> Result<(), Box<dyn error::Error>> {

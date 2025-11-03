@@ -28,6 +28,10 @@ impl DiskHandler {
                 self.disk_map.delete(k)?;
                 Ok(format!("deleted {k}"))
             }
+            "compact" => match self.disk_map.compact() {
+                Err(err) => Err(err),
+                Ok(n) => Ok(format!("compacted to {n} bytes")),
+            },
             "size" => match self.disk_map.size() {
                 Err(err) => Err(format!("error calling size: {}", err).into()),
                 Ok(size) => Ok(size),

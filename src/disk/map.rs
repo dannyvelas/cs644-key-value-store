@@ -123,6 +123,44 @@ impl DiskMap {
         Ok(())
     }
 
+    pub fn compact(&self) -> Result<(), Box<dyn error::Error>> {
+        // open file
+        let fd = fcntl::open(
+            self.file_path.deref(),
+            OFlag::O_RDWR | OFlag::O_CREAT,
+            Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH,
+        )?;
+
+        // acquire exclusive lock
+        let lock = fcntl::Flock::lock(fd, fcntl::FlockArg::LockExclusive).map_err(|(_, e)| e)?;
+
+        // read all keys
+        let read_result = DiskMap::slurp(lock.as_fd())?;
+
+        // create new vec buffer
+        let mut new_buf = Vec::<u8>::new();
+        for entry in read_result {
+            let entry_bytes = entry.to_bytes()?;
+            new_buf.extend_from_slice(&entry_bytes);
+        }
+
+        // seek to beginning of file
+        if unsafe { libc::lseek(lock.as_raw_fd(), 0, libc::SEEK_END) } == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
+
+        // write new vec buffer
+        let n = unsafe { libc::write(lock.as_raw_fd(), new_buf.as_ptr().cast(), new_buf.len()) };
+        if n == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
+
+        // release lock
+        let _ = lock.unlock().map_err(|(_, e)| e)?;
+
+        Ok(())
+    }
+
     fn _delete(&self, fd: os::fd::BorrowedFd, k: &str) -> Result<(), Box<dyn error::Error>> {
         // read into variable
         let mut read_result = DiskMap::slurp(fd)?;
@@ -145,32 +183,7 @@ impl DiskMap {
             return Err(io::Error::last_os_error().into());
         }
 
-        // create Entry  [0u8] + [k.len() as u32]  + [v.len() as u32] + [k] + [v]
-        let klen: u32 = k.len().try_into()?;
-        let key_size_bytes: [u8; 4] = [
-            ((klen >> 24) as u8),
-            ((klen >> 16) as u8),
-            ((klen >> 8) as u8),
-            (klen as u8),
-        ];
-        let vlen: u32 = v.len().try_into()?;
-        let value_size_bytes: [u8; 4] = [
-            ((vlen >> 24) as u8),
-            ((vlen >> 16) as u8),
-            ((vlen >> 8) as u8),
-            (vlen as u8),
-        ];
-        let mut buf = Vec::<u8>::with_capacity(
-            1 + key_size_bytes.len() + value_size_bytes.len() + k.len() + v.len(),
-        );
-        buf.extend_from_slice(&[1u8; 1]);
-        buf.extend_from_slice(&key_size_bytes);
-        buf.extend_from_slice(&value_size_bytes);
-        buf.extend_from_slice(k.as_bytes());
-        buf.extend_from_slice(v.as_bytes());
-
-        println!("buf={:?}", buf);
-
+        let buf = reader::Entry::new(k, v).to_bytes()?;
         let n = unsafe { libc::write(fd.as_raw_fd(), buf.as_ptr().cast(), buf.len()) };
         if n == -1 {
             return Err(io::Error::last_os_error().into());
@@ -205,8 +218,13 @@ impl DiskMap {
             Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH,
         )?;
 
+        // acquire non-exclusive lock
         let lock = fcntl::Flock::lock(fd, fcntl::FlockArg::LockShared).map_err(|(_, e)| e)?;
+
+        // slurp
         let read_result = DiskMap::slurp(lock.as_fd())?;
+
+        // release lock
         let _ = lock.unlock().map_err(|(_, e)| e)?;
 
         Ok(read_result)

@@ -1,7 +1,46 @@
+use std::error;
+
 pub struct Entry {
     pub offset: usize,
     pub key: String,
     pub value: String,
+}
+
+impl Entry {
+    pub fn new(key: &str, value: &str) -> Entry {
+        Entry {
+            offset: 0,
+            key: key.to_owned(),
+            value: value.to_owned(),
+        }
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>, Box<dyn error::Error>> {
+        let klen: u32 = self.key.len().try_into()?;
+        let key_size_bytes: [u8; 4] = [
+            ((klen >> 24) as u8),
+            ((klen >> 16) as u8),
+            ((klen >> 8) as u8),
+            (klen as u8),
+        ];
+        let vlen: u32 = self.value.len().try_into()?;
+        let value_size_bytes: [u8; 4] = [
+            ((vlen >> 24) as u8),
+            ((vlen >> 16) as u8),
+            ((vlen >> 8) as u8),
+            (vlen as u8),
+        ];
+        let mut buf = Vec::<u8>::with_capacity(
+            1 + key_size_bytes.len() + value_size_bytes.len() + self.key.len() + self.value.len(),
+        );
+        buf.extend_from_slice(&[1u8; 1]);
+        buf.extend_from_slice(&key_size_bytes);
+        buf.extend_from_slice(&value_size_bytes);
+        buf.extend_from_slice(self.key.as_bytes());
+        buf.extend_from_slice(self.value.as_bytes());
+
+        Ok(buf)
+    }
 }
 
 pub struct ReadResult {

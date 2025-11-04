@@ -159,13 +159,13 @@ impl TCPServer {
             };
 
             // process
-            let mut out = self.handler.handle(&input);
+            let out = self.handler.handle(&input);
 
             // write output
-            let out_len = out.len() as libc::size_t;
-            if unsafe { libc::write(conn, out.as_mut_ptr().cast(), out_len) } == -1 {
-                unsafe { libc::close(conn) };
-                return Err(io::Error::last_os_error().into());
+            match TCPServer::safe_write(conn, &out) {
+                Err(Error::RetryableErr(_)) => continue,
+                Err(Error::UnexpectedErr(err)) => return Err(err),
+                _ => {}
             }
         }
         unsafe {
@@ -178,23 +178,24 @@ impl TCPServer {
 
     fn safe_read(conn: i32) -> Result<String, Error> {
         let mut buf = [0u8; 1024];
-        let n = unsafe { libc::read(conn, buf.as_mut_ptr().cast(), buf.len() as libc::size_t) };
-        if n == -1 {
-            let err = io::Error::last_os_error();
-            return match err.raw_os_error() {
-                Some(x) if x == libc::EAGAIN || x == libc::EINTR => Err(Error::RetryableErr(x)),
-                _ => unsafe {
-                    libc::close(conn);
-                    Err(Error::UnexpectedErr(err.into()))
-                },
-            };
-        } else if n == 0 {
-            return Err(Error::CloseErr());
-        } else {
-            let bytes = &buf[..n as usize];
-            match str::from_utf8(bytes) {
-                Err(err) => Err(Error::UnexpectedErr(err.into())),
-                Ok(s) => Ok(s.trim().to_owned()),
+        match unsafe { libc::read(conn, buf.as_mut_ptr().cast(), buf.len() as libc::size_t) } {
+            -1 => {
+                let err = io::Error::last_os_error();
+                match err.raw_os_error() {
+                    Some(x) if x == libc::EAGAIN || x == libc::EINTR => Err(Error::RetryableErr(x)),
+                    _ => unsafe {
+                        libc::close(conn);
+                        Err(Error::UnexpectedErr(err.into()))
+                    },
+                }
+            }
+            0 => Err(Error::CloseErr()),
+            n => {
+                let bytes = &buf[..n as usize];
+                match str::from_utf8(bytes) {
+                    Err(err) => Err(Error::UnexpectedErr(err.into())),
+                    Ok(s) => Ok(s.trim().to_owned()),
+                }
             }
         }
     }

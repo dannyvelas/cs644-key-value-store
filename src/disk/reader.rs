@@ -31,12 +31,12 @@ impl Entry {
         // get key size field, it is 4 bytes long and stored in big-endian
         // if number is 0xCAFEBABE, it is stored as CA FE BA BE
         let key_size_bytes = &bytes[offset..(offset + LEN_SIZE)];
-        let key_size = Entry::parse_size(key_size_bytes);
+        let key_size = Entry::parse_size(key_size_bytes) as usize;
         offset += LEN_SIZE;
 
         // get value size field, also 4 bytes long and stored in big-endian
         let value_size_bytes = &bytes[offset..(offset + LEN_SIZE)];
-        let value_size = Entry::parse_size(value_size_bytes);
+        let value_size = Entry::parse_size(value_size_bytes) as usize;
         offset += LEN_SIZE;
 
         let key = str::from_utf8(&bytes[offset..(offset + key_size)]).ok()?;
@@ -73,8 +73,8 @@ impl Entry {
         [((size >> 8) as u8), (size as u8)]
     }
 
-    fn parse_size(bytes: &[u8]) -> usize {
-        (((bytes[0] as u16) << 8) | (bytes[1] as u16)) as usize
+    fn parse_size(bytes: &[u8]) -> u16 {
+        ((bytes[0] as u16) << 8) | (bytes[1] as u16)
     }
 }
 

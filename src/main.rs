@@ -1,6 +1,6 @@
 use std::{error, io, mem, ptr};
 
-use nix::libc;
+use nix::{libc, unistd};
 mod disk;
 mod handler;
 mod net;
@@ -40,6 +40,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
     }
 
+    // process id
+    let pid = unistd::getpid();
+
     // define deps
     let disk_map = disk::map::DiskMap::new("/tmp/map")?;
 
@@ -47,7 +50,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let handler = Box::new(handler::DiskHandler::new(disk_map));
 
     // start server
-    let tcp_server = net::server::TCPServer::new(handler);
+    let tcp_server = net::server::TCPServer::new(pid, handler);
     let result = tcp_server.start(pipefd[0], "8080");
 
     // close self-write fds

@@ -1,4 +1,4 @@
-use nix::libc;
+use nix::{libc, unistd};
 use std::{error, ffi, io, mem, ptr};
 
 use crate::net::types::Handler;
@@ -20,12 +20,13 @@ pub struct ConnectionCtx<'a> {
 }
 
 pub struct TCPServer {
+    pid: unistd::Pid,
     handler: Box<dyn Handler>,
 }
 
 impl TCPServer {
-    pub fn new(handler: Box<dyn Handler>) -> TCPServer {
-        TCPServer { handler }
+    pub fn new(pid: unistd::Pid, handler: Box<dyn Handler>) -> TCPServer {
+        TCPServer { pid, handler }
     }
 
     pub fn start(&self, signal_fd: i32, port: &str) -> Result<(), Box<dyn error::Error>> {
@@ -166,6 +167,13 @@ impl TCPServer {
     }
 
     fn repl(&self, conn: i32) -> ReadError {
+        // welcome user
+        let welcome_msg = format!("Connected to TCP server! Process ID: {}.\n\n", self.pid);
+        match TCPServer::safe_write(conn, &welcome_msg) {
+            Err(Error::UnexpectedErr(err)) => return ReadError::UnexpectedErr(err),
+            _ => {}
+        }
+
         loop {
             // show prompt
             match TCPServer::safe_write(conn, "~> ") {

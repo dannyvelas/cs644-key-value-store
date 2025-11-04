@@ -8,6 +8,12 @@ enum Error {
     UnexpectedErr(String),
 }
 
+enum ReadError {
+    RetryableErr(i32),
+    UnexpectedErr(String),
+    Closed,
+}
+
 pub struct ConnectionCtx<'a> {
     server: &'a TCPServer,
     conn: i32,
@@ -142,21 +148,33 @@ impl TCPServer {
     }
 
     fn handle_connection(&self, conn: i32) -> Result<(), Box<dyn error::Error>> {
-        let err_msg = loop {
+        if let ReadError::Closed = self.repl(conn) {
+            unsafe {
+                let msg = "client closed connection. closing on server side.\n";
+                libc::write(conn, msg.as_ptr().cast(), msg.len() as libc::size_t);
+            }
+        }
+        unsafe { libc::close(conn) };
+        Ok(())
+    }
+
+    fn repl(&self, conn: i32) -> ReadError {
+        loop {
             // show prompt
             match TCPServer::safe_write(conn, "~> ") {
                 Err(Error::RetryableErr(_)) => continue,
-                Err(Error::UnexpectedErr(err)) => break err,
+                Err(Error::UnexpectedErr(err)) => return ReadError::UnexpectedErr(err),
                 _ => {}
             }
 
             // read input
             let input = match TCPServer::safe_read(conn) {
                 Ok(ref s) if s == "" => continue,
-                Ok(ref s) if s == "quit" || s == "exit" => break "close request".into(),
+                Ok(ref s) if s == "quit" || s == "exit" => return ReadError::Closed,
                 Ok(s) => s,
-                Err(Error::RetryableErr(_)) => continue,
-                Err(Error::UnexpectedErr(err)) => break err,
+                Err(ReadError::RetryableErr(_)) => continue,
+                Err(ReadError::UnexpectedErr(err)) => return ReadError::UnexpectedErr(err),
+                Err(ReadError::Closed) => return ReadError::Closed,
             };
 
             // process
@@ -165,16 +183,10 @@ impl TCPServer {
             // write output
             match TCPServer::safe_write(conn, &out) {
                 Err(Error::RetryableErr(_)) => continue,
-                Err(Error::UnexpectedErr(err)) => break err,
-                _ => {}
+                Err(Error::UnexpectedErr(err)) => return ReadError::UnexpectedErr(err),
+                _ => continue,
             }
-        };
-        unsafe {
-            let msg = format!("{err_msg}.\n");
-            libc::write(conn, msg.as_ptr().cast(), msg.len() as libc::size_t);
-            libc::close(conn);
         }
-        Ok(())
     }
 
     fn safe_accept(sock_fd: i32) -> Result<i32, Error> {
@@ -189,21 +201,21 @@ impl TCPServer {
         Ok(conn)
     }
 
-    fn safe_read(conn: i32) -> Result<String, Error> {
+    fn safe_read(conn: i32) -> Result<String, ReadError> {
         let mut buf = [0u8; 1024];
         let n = unsafe { libc::read(conn, buf.as_mut_ptr().cast(), buf.len() as libc::size_t) };
         if n == -1 {
             let err = io::Error::last_os_error();
             match err.raw_os_error() {
-                Some(x) if x == libc::EAGAIN || x == libc::EINTR => Err(Error::RetryableErr(x)),
-                _ => Err(Error::UnexpectedErr(err.to_string())),
+                Some(x) if x == libc::EAGAIN || x == libc::EINTR => Err(ReadError::RetryableErr(x)),
+                _ => Err(ReadError::UnexpectedErr(err.to_string())),
             }
         } else if n == 0 {
-            Err(Error::UnexpectedErr("close request".to_string()))
+            Err(ReadError::Closed)
         } else {
             let bytes = &buf[..n as usize];
             match str::from_utf8(bytes) {
-                Err(err) => Err(Error::UnexpectedErr(err.to_string())),
+                Err(err) => Err(ReadError::UnexpectedErr(err.to_string())),
                 Ok(s) => Ok(s.trim().to_owned()),
             }
         }

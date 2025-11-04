@@ -3,9 +3,10 @@ use std::{error, ffi, io, mem, ptr};
 
 use crate::net::types::Handler;
 
-enum EpollErr {
-    EINTR,
+enum Error {
+    RetryableErr(i32),
     UnexpectedErr(Box<dyn error::Error>),
+    CloseErr(),
 }
 
 pub struct ConnectionCtx<'a> {
@@ -37,8 +38,8 @@ impl TCPServer {
         let mut events: [libc::epoll_event; MAX_EVENTS as usize] = unsafe { mem::zeroed() };
         loop {
             match self.handle_events(epoll_fd, &mut events, MAX_EVENTS, signal_fd, sock_fd) {
-                Ok(()) | Err(EpollErr::EINTR) => continue,
-                Err(EpollErr::UnexpectedErr(err)) => {
+                Ok(()) | Err(Error::RetryableErr(_)) => continue,
+                Err(Error::UnexpectedErr(err)) => {
                     eprintln!("{err}");
                     break;
                 }
@@ -56,21 +57,21 @@ impl TCPServer {
         max_events: i32,
         signal_fd: i32,
         sock_fd: i32,
-    ) -> Result<(), EpollErr> {
+    ) -> Result<(), Error> {
         let count = unsafe { libc::epoll_wait(epoll_fd, events.as_mut_ptr(), max_events, -1) };
         if count == -1 {
             let last_err = io::Error::last_os_error();
             if last_err.raw_os_error() == Some(libc::EINTR) {
-                return Err(EpollErr::EINTR);
+                return Err(Error::RetryableErr(libc::EINTR));
             }
-            return Err(EpollErr::UnexpectedErr(
+            return Err(Error::UnexpectedErr(
                 format!("got -1 from epoll_wait: {}", last_err).into(),
             ));
         }
 
         for i in 0..count as usize {
             if let Err(err) = self.handle_event(events[i], signal_fd, sock_fd) {
-                return Err(EpollErr::UnexpectedErr(err));
+                return Err(Error::UnexpectedErr(err));
             }
         }
         Ok(())
@@ -103,7 +104,7 @@ impl TCPServer {
         if signal == libc::SIGINT {
             return Err("received SIGINT".into());
         } else if signal == libc::SIGUSR1 {
-            self.handler.handle("compact")
+            self.handler.handle("compact");
         }
 
         return Ok(());
@@ -133,7 +134,7 @@ impl TCPServer {
     extern "C" fn handle_c(arg: *mut ffi::c_void) -> *mut ffi::c_void {
         let arg = unsafe { Box::from_raw(arg as *mut ConnectionCtx) };
         if let Err(err) = arg.server.handle_connection(arg.conn) {
-            eprintln!("internal server error encountered: {}", err)
+            eprintln!("internal server error. connection closed: {}", err)
         }
         ptr::null_mut()
     }
@@ -141,63 +142,75 @@ impl TCPServer {
     fn handle_connection(&self, conn: i32) -> Result<(), Box<dyn error::Error>> {
         loop {
             // show prompt
-            let mut p = String::from("~> ");
-            if unsafe { libc::write(conn, p.as_mut_ptr().cast(), p.len() as libc::size_t) } == -1
-                && let Err(err) = TCPServer::close_fd(conn, Some(io::Error::last_os_error()))
-            {
-                return Err(err.into());
+            match TCPServer::safe_write(conn, "~> ") {
+                Err(Error::RetryableErr(_)) => continue,
+                Err(Error::UnexpectedErr(err)) => return Err(err),
+                _ => {}
             }
 
             // read input
-            let mut buf = [0u8; 1024];
-            let n = unsafe { libc::read(conn, buf.as_mut_ptr().cast(), buf.len() as libc::size_t) };
-            if n == 0 {
-                break;
-            }
-            if n == -1
-                && let Err(err) = TCPServer::close_fd(conn, Some(io::Error::last_os_error()))
-            {
-                return Err(err.into());
-            }
-            let bytes = &buf[..n as usize];
-
-            let input = str::from_utf8(bytes)?.trim();
-            if input == "" {
-                continue;
-            } else if input == "quit" || input == "exit" {
-                break;
-            }
+            let input = match TCPServer::safe_read(conn) {
+                Ok(ref s) if s == "" => continue,
+                Ok(ref s) if s == "quit" || s == "exit" => break,
+                Ok(s) => s,
+                Err(Error::RetryableErr(_)) => continue,
+                Err(Error::UnexpectedErr(err)) => return Err(err),
+                Err(Error::CloseErr()) => break,
+            };
 
             // process
-            let mut out = self.handler.handle(input);
+            let mut out = self.handler.handle(&input);
 
             // write output
-            if unsafe { libc::write(conn, out.as_mut_ptr().cast(), out.len() as libc::size_t) }
-                == -1
-                && let Err(err) = TCPServer::close_fd(conn, Some(io::Error::last_os_error()))
-            {
-                return Err(err.into());
+            let out_len = out.len() as libc::size_t;
+            if unsafe { libc::write(conn, out.as_mut_ptr().cast(), out_len) } == -1 {
+                unsafe { libc::close(conn) };
+                return Err(io::Error::last_os_error().into());
             }
         }
-        let msg = "client has closed socket. now closing on server side.\n".as_bytes();
         unsafe {
+            let msg = "client has closed socket. now closing on server side.\n".as_bytes();
             libc::write(conn, msg.as_ptr().cast(), msg.len() as libc::size_t);
+            libc::close(conn);
         }
-        TCPServer::close_fd(conn, None)?;
         Ok(())
     }
 
-    fn close_fd(fd: i32, error: Option<io::Error>) -> Result<(), io::Error> {
-        let close_status = unsafe { libc::close(fd) };
-        match (close_status, error) {
-            (-1, None) => Err(io::Error::last_os_error()),
-            (-1, Some(err)) => {
-                let merged = format!("error: {}, close: {}", err, io::Error::last_os_error());
-                Err(io::Error::new(err.kind(), merged))
+    fn safe_read(conn: i32) -> Result<String, Error> {
+        let mut buf = [0u8; 1024];
+        let n = unsafe { libc::read(conn, buf.as_mut_ptr().cast(), buf.len() as libc::size_t) };
+        if n == -1 {
+            let err = io::Error::last_os_error();
+            return match err.raw_os_error() {
+                Some(x) if x == libc::EAGAIN || x == libc::EINTR => Err(Error::RetryableErr(x)),
+                _ => unsafe {
+                    libc::close(conn);
+                    Err(Error::UnexpectedErr(err.into()))
+                },
+            };
+        } else if n == 0 {
+            return Err(Error::CloseErr());
+        } else {
+            let bytes = &buf[..n as usize];
+            match str::from_utf8(bytes) {
+                Err(err) => Err(Error::UnexpectedErr(err.into())),
+                Ok(s) => Ok(s.trim().to_owned()),
             }
-            (_, Some(err)) => Err(err),
-            (_, None) => Ok(()),
         }
+    }
+
+    fn safe_write(conn: i32, s: &str) -> Result<(), Error> {
+        if unsafe { libc::write(conn, s.as_ptr().cast(), s.len() as libc::size_t) } == -1 {
+            let err = io::Error::last_os_error();
+            return match err.raw_os_error() {
+                Some(x) if x == libc::EAGAIN || x == libc::EINTR => Err(Error::RetryableErr(x)),
+                _ => unsafe {
+                    libc::close(conn);
+                    Err(Error::UnexpectedErr(err.into()))
+                },
+            };
+        }
+        Ok(())
     }
 
     fn local_sockfd(port: &str) -> Result<i32, Box<dyn error::Error>> {

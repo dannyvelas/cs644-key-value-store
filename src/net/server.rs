@@ -4,12 +4,12 @@ use std::{error, ffi, io, mem, ptr};
 use crate::net::types::Handler;
 
 enum Error {
-    RetryableErr(i32),
+    RetryableErr,
     UnexpectedErr(String),
 }
 
 enum ReadError {
-    RetryableErr(i32),
+    RetryableErr,
     UnexpectedErr(String),
     Closed,
 }
@@ -43,7 +43,7 @@ impl TCPServer {
         let mut events: [libc::epoll_event; MAX_EVENTS as usize] = unsafe { mem::zeroed() };
         loop {
             match self.handle_events(epoll_fd, &mut events, MAX_EVENTS, signal_fd, sock_fd) {
-                Ok(()) | Err(Error::RetryableErr(_)) => continue,
+                Ok(()) | Err(Error::RetryableErr) => continue,
                 Err(Error::UnexpectedErr(err)) => {
                     eprintln!("{err}");
                     break;
@@ -69,7 +69,7 @@ impl TCPServer {
         if count == -1 {
             let last_err = io::Error::last_os_error();
             if last_err.raw_os_error() == Some(libc::EINTR) {
-                return Err(Error::RetryableErr(libc::EINTR));
+                return Err(Error::RetryableErr);
             }
             return Err(Error::UnexpectedErr(
                 format!("got -1 from epoll_wait: {}", last_err).into(),
@@ -122,7 +122,7 @@ impl TCPServer {
     fn accept_conn(&self, sock_fd: i32) -> Result<(), Box<dyn error::Error>> {
         let conn = match TCPServer::safe_accept(sock_fd) {
             Err(Error::UnexpectedErr(err)) => return Err(err.into()),
-            Err(Error::RetryableErr(_)) => return Ok(()),
+            Err(Error::RetryableErr) => return Ok(()),
             Ok(conn) => conn,
         };
 
@@ -164,7 +164,7 @@ impl TCPServer {
         loop {
             // show prompt
             match TCPServer::safe_write(conn, "~> ") {
-                Err(Error::RetryableErr(_)) => continue,
+                Err(Error::RetryableErr) => continue,
                 Err(Error::UnexpectedErr(err)) => return ReadError::UnexpectedErr(err),
                 _ => {}
             }
@@ -174,7 +174,7 @@ impl TCPServer {
                 Ok(ref s) if s == "" => continue,
                 Ok(ref s) if s == "quit" || s == "exit" => return ReadError::Closed,
                 Ok(s) => s,
-                Err(ReadError::RetryableErr(_)) => continue,
+                Err(ReadError::RetryableErr) => continue,
                 Err(ReadError::UnexpectedErr(err)) => return ReadError::UnexpectedErr(err),
                 Err(ReadError::Closed) => return ReadError::Closed,
             };
@@ -184,7 +184,7 @@ impl TCPServer {
 
             // write output
             match TCPServer::safe_write(conn, &out) {
-                Err(Error::RetryableErr(_)) => continue,
+                Err(Error::RetryableErr) => continue,
                 Err(Error::UnexpectedErr(err)) => return ReadError::UnexpectedErr(err),
                 _ => continue,
             }
@@ -196,7 +196,7 @@ impl TCPServer {
         if conn == -1 {
             let err = io::Error::last_os_error();
             return match err.raw_os_error() {
-                Some(x) if x == libc::EAGAIN || x == libc::EINTR => Err(Error::RetryableErr(x)),
+                Some(libc::EAGAIN) | Some(libc::EINTR) => Err(Error::RetryableErr),
                 _ => Err(Error::UnexpectedErr(err.to_string())),
             };
         }
@@ -209,7 +209,7 @@ impl TCPServer {
         if n == -1 {
             let err = io::Error::last_os_error();
             match err.raw_os_error() {
-                Some(x) if x == libc::EAGAIN || x == libc::EINTR => Err(ReadError::RetryableErr(x)),
+                Some(libc::EAGAIN) | Some(libc::EINTR) => Err(ReadError::RetryableErr),
                 _ => Err(ReadError::UnexpectedErr(err.to_string())),
             }
         } else if n == 0 {
@@ -227,7 +227,7 @@ impl TCPServer {
         if unsafe { libc::write(conn, s.as_ptr().cast(), s.len() as libc::size_t) } == -1 {
             let err = io::Error::last_os_error();
             return match err.raw_os_error() {
-                Some(x) if x == libc::EAGAIN || x == libc::EINTR => Err(Error::RetryableErr(x)),
+                Some(libc::EAGAIN) | Some(libc::EINTR) => Err(Error::RetryableErr),
                 _ => Err(Error::UnexpectedErr(err.to_string())),
             };
         }

@@ -17,28 +17,8 @@ extern "C" fn handle_signal(signal_no: libc::c_int) {
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    // signal stuff
-    let mut pipefd = [0i32; 2];
-    unsafe {
-        libc::pipe2(pipefd.as_mut_ptr(), libc::O_NONBLOCK);
-        SELF_PIPE_WRITE = pipefd[1];
-
-        // register handler
-        let mut action = libc::sigaction {
-            sa_sigaction: handle_signal as usize,
-            sa_mask: mem::zeroed(),
-            sa_flags: 0,
-            sa_restorer: mem::zeroed(),
-        };
-        libc::sigemptyset(&mut action.sa_mask);
-        if libc::sigaction(libc::SIGUSR1, &action, ptr::null_mut()) == -1 {
-            return Err(io::Error::last_os_error().into());
-        }
-
-        if libc::sigaction(libc::SIGINT, &action, ptr::null_mut()) == -1 {
-            return Err(io::Error::last_os_error().into());
-        }
-    }
+    // init signal pipe
+    let pipe_fd = init_signal_pipe()?;
 
     // process id
     let pid = unistd::getpid();
@@ -51,11 +31,36 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     // start server
     let tcp_server = net::server::TCPServer::new(pid, handler);
-    let result = tcp_server.start(pipefd[0], "8080");
+    let result = tcp_server.start(pipe_fd[0], "8080");
 
     // close self-write fds
-    unsafe { libc::close(pipefd[0]) };
-    unsafe { libc::close(pipefd[1]) };
+    unsafe { libc::close(pipe_fd[0]) };
+    unsafe { libc::close(pipe_fd[1]) };
 
     result
+}
+
+fn init_signal_pipe() -> Result<[i32; 2], io::Error> {
+    let mut pipe_fd = [0i32; 2];
+    unsafe {
+        libc::pipe2(pipe_fd.as_mut_ptr(), libc::O_NONBLOCK);
+        SELF_PIPE_WRITE = pipe_fd[1];
+
+        // register handler
+        let mut action = libc::sigaction {
+            sa_sigaction: handle_signal as usize,
+            sa_mask: mem::zeroed(),
+            sa_flags: 0,
+            sa_restorer: mem::zeroed(),
+        };
+        libc::sigemptyset(&mut action.sa_mask);
+        if libc::sigaction(libc::SIGUSR1, &action, ptr::null_mut()) == -1 {
+            return Err(io::Error::last_os_error());
+        }
+
+        if libc::sigaction(libc::SIGINT, &action, ptr::null_mut()) == -1 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(pipe_fd)
 }

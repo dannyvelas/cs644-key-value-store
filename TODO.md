@@ -1,14 +1,14 @@
 ## behavior
 - [x] add compact function
-- [ ] make compact function get called by signal
+- [x] make compact function get called by signal
 - [ ] print process id at start of session for user
 
 ## correctness
 - [x] make server handle Ctrl+C gracefully
 - [x] allow use to exit session by Ctrl+d or "exit" command
 - [x] make sure signal handling is graceful
-- [ ] remove all the print statements
-- [ ] close epoll?
+- [x] close epoll?
+- [x] remove all the print statements
 - [ ] make sure error handling like no key found is graceful
 
 ## cosmetic

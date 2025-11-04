@@ -48,5 +48,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     // start server
     let tcp_server = net::server::TCPServer::new(handler);
-    tcp_server.start(pipefd[0], "8080")
+    let result = tcp_server.start(pipefd[0], "8080");
+
+    // close self-write fds
+    unsafe { libc::close(pipefd[0]) };
+    unsafe { libc::close(pipefd[1]) };
+
+    result
 }

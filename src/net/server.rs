@@ -50,9 +50,8 @@ impl TCPServer {
                 }
             }
         }
-        // TODO: should i close epoll_fd as well?
-        // TODO: should i close signal_fd as well?
         eprintln!("closing socket");
+        unsafe { libc::close(epoll_fd) };
         unsafe { libc::close(sock_fd) };
         Ok(())
     }

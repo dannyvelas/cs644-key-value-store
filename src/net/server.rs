@@ -22,11 +22,17 @@ pub struct ConnectionCtx<'a> {
 pub struct TCPServer {
     pid: unistd::Pid,
     handler: Box<dyn Handler>,
+    help_message: String,
 }
 
 impl TCPServer {
     pub fn new(pid: unistd::Pid, handler: Box<dyn Handler>) -> TCPServer {
-        TCPServer { pid, handler }
+        let help_message = TCPServer::build_help_message(handler.supported_commands());
+        TCPServer {
+            pid,
+            handler,
+            help_message,
+        }
     }
 
     pub fn start(&self, signal_fd: i32, port: &str) -> Result<(), Box<dyn error::Error>> {
@@ -169,15 +175,8 @@ impl TCPServer {
     fn repl(&self, conn: i32) -> ReadError {
         // welcome user
         let welcome_msg = &format!(
-            "Connected to DiskMap TCP server! Process ID: {}.\n\nSupported commands:
-- get <key>
-- set <key> <value>
-- delete <key>
-- compact
-- size
-- dump
-- exit (or quit)\n\n",
-            self.pid
+            "Connected to DiskMap TCP server! Process ID: {}.\n\n{}\n\n",
+            self.pid, self.help_message,
         );
         match TCPServer::safe_write(conn, &welcome_msg) {
             Err(Error::UnexpectedErr(err)) => return ReadError::UnexpectedErr(err),
@@ -203,10 +202,13 @@ impl TCPServer {
             };
 
             // process
-            let out = self.handler.handle(&input);
+            let out = match input {
+                ref s if s == "help" => self.help_message.clone(),
+                _ => self.handler.handle(&input),
+            };
 
             // write output
-            match TCPServer::safe_write(conn, &out) {
+            match TCPServer::safe_write(conn, &(out + "\n\n")) {
                 Err(Error::RetryableErr) => continue,
                 Err(Error::UnexpectedErr(err)) => return ReadError::UnexpectedErr(err),
                 _ => continue,
@@ -346,5 +348,10 @@ impl TCPServer {
             }
         }
         Ok(())
+    }
+
+    fn build_help_message(supported_commands: &[&str]) -> String {
+        let joined_commands = supported_commands.join("\n- ");
+        format!("Supported commands:\n- {joined_commands}\n- help\n- exit (or quit)")
     }
 }

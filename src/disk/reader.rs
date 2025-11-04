@@ -1,5 +1,7 @@
 use std::error;
 
+const LEN_SIZE: usize = 2;
+
 pub struct Entry {
     pub offset: usize,
     pub live: bool,
@@ -15,7 +17,7 @@ impl Entry {
             offset: 0,
             key: key.to_owned(),
             value: value.to_owned(),
-            len: 1 + 4 + 4 + key.len() + value.len(),
+            len: 1 + LEN_SIZE + LEN_SIZE + key.len() + value.len(),
         }
     }
 
@@ -28,14 +30,14 @@ impl Entry {
 
         // get key size field, it is 4 bytes long and stored in big-endian
         // if number is 0xCAFEBABE, it is stored as CA FE BA BE
-        let key_size_bytes = &bytes[offset..(offset + 4)];
+        let key_size_bytes = &bytes[offset..(offset + LEN_SIZE)];
         let key_size = Entry::parse_size(key_size_bytes);
-        offset += 4;
+        offset += LEN_SIZE;
 
         // get value size field, also 4 bytes long and stored in big-endian
-        let value_size_bytes = &bytes[offset..(offset + 4)];
+        let value_size_bytes = &bytes[offset..(offset + LEN_SIZE)];
         let value_size = Entry::parse_size(value_size_bytes);
-        offset += 4;
+        offset += LEN_SIZE;
 
         let key = str::from_utf8(&bytes[offset..(offset + key_size)]).ok()?;
         offset += key_size;
@@ -67,20 +69,12 @@ impl Entry {
         Ok(buf)
     }
 
-    fn size_to_bytes(size: u32) -> [u8; 4] {
-        [
-            ((size >> 24) as u8),
-            ((size >> 16) as u8),
-            ((size >> 8) as u8),
-            (size as u8),
-        ]
+    fn size_to_bytes(size: u16) -> [u8; LEN_SIZE] {
+        [((size >> 8) as u8), (size as u8)]
     }
 
     fn parse_size(bytes: &[u8]) -> usize {
-        (((bytes[0] as i32) << 24)
-            | ((bytes[1] as i32) << 16)
-            | ((bytes[2] as i32) << 8)
-            | (bytes[3] as i32)) as usize
+        (((bytes[0] as u16) << 8) | (bytes[1] as u16)) as usize
     }
 }
 

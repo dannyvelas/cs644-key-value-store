@@ -1,5 +1,5 @@
 use nix::{fcntl, fcntl::OFlag, libc, sys, sys::stat::Mode, unistd};
-use std::collections::HashMap;
+use std::collections::{self, HashMap};
 use std::ops::Deref;
 use std::os::fd::{AsFd, AsRawFd};
 use std::{error, ffi, io, os, process, thread, time};
@@ -138,8 +138,13 @@ impl DiskMap {
         let read_result = DiskMap::slurp(lock.as_fd())?;
 
         // create new vec buffer
+        let mut seen = collections::HashSet::<String>::new();
         let mut new_buf = Vec::<u8>::new();
         for entry in read_result {
+            if !seen.insert(entry.key.clone()) {
+                continue;
+            }
+
             let entry_bytes = entry.to_bytes()?;
             new_buf.extend_from_slice(&entry_bytes);
         }

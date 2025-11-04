@@ -150,14 +150,17 @@ impl TCPServer {
     }
 
     fn handle_connection(&self, conn: i32) -> Result<(), Box<dyn error::Error>> {
-        if let ReadError::Closed = self.repl(conn) {
-            unsafe {
+        let result = match self.repl(conn) {
+            ReadError::Closed => unsafe {
                 let msg = "client closed connection. closing on server side.\n";
                 libc::write(conn, msg.as_ptr().cast(), msg.len() as libc::size_t);
-            }
-        }
+                Ok(())
+            },
+            ReadError::UnexpectedErr(err) => Err(err.into()),
+            _ => Ok(()),
+        };
         unsafe { libc::close(conn) };
-        Ok(())
+        result
     }
 
     fn repl(&self, conn: i32) -> ReadError {

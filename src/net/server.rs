@@ -204,6 +204,7 @@ impl TCPServer {
             // process
             let out = match input {
                 ref s if s == "help" => self.help_message.clone(),
+                ref s if s == "compact" => self.send_sigusr1(),
                 _ => self.handler.handle(&input),
             };
 
@@ -214,6 +215,11 @@ impl TCPServer {
                 _ => continue,
             }
         }
+    }
+
+    fn send_sigusr1(&self) -> String {
+        unsafe { libc::kill(self.pid.as_raw(), libc::SIGUSR1) };
+        String::from("compacted")
     }
 
     fn safe_accept(sock_fd: i32) -> Result<i32, Error> {

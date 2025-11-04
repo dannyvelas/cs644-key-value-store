@@ -1,7 +1,10 @@
 ## behavior
 - [x] add compact function
 - [x] make compact function get called by signal
-- [ ] print process id at start of session for user
+- [x] print process id at start of session for user
+- [x] compact doesn't seem to compact enough
+- [x] (can't) add support for readline bindings to netcat like Ctrl+U, Ctrl+k, Alt+d, Ctrl+w
+- [ ] show list of supported commands in welcome message
 
 ## correctness
 - [x] make server handle Ctrl+C gracefully
@@ -9,7 +12,7 @@
 - [x] make sure signal handling is graceful
 - [x] close epoll?
 - [x] remove all the print statements
-- [ ] make sure error handling like no key found is graceful
+- [x] make sure error handling like no key found is graceful
 
 ## cosmetic
 - [x] probably encapsulate file reading in its own class

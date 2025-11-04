@@ -168,7 +168,17 @@ impl TCPServer {
 
     fn repl(&self, conn: i32) -> ReadError {
         // welcome user
-        let welcome_msg = format!("Connected to TCP server! Process ID: {}.\n\n", self.pid);
+        let welcome_msg = &format!(
+            "Connected to DiskMap TCP server! Process ID: {}.\n\nSupported commands:
+- get <key>
+- set <key> <value>
+- delete <key>
+- compact
+- size
+- dump
+- exit (or quit)\n\n",
+            self.pid
+        );
         match TCPServer::safe_write(conn, &welcome_msg) {
             Err(Error::UnexpectedErr(err)) => return ReadError::UnexpectedErr(err),
             _ => {}

@@ -93,7 +93,10 @@ impl TCPServer {
         match event.u64 as i32 {
             fd if fd == signal_fd => self.accept_signal(signal_fd),
             fd if fd == sock_fd => self.accept_conn(sock_fd),
-            fd => Err(format!("received unexpected event of fd: {}", fd).into()),
+            fd => {
+                eprintln!("received unexpected event of fd: {}", fd);
+                Ok(())
+            }
         }
     }
 

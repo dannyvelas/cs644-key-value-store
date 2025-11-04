@@ -102,9 +102,11 @@ impl TCPServer {
         let len = buf.len() as libc::size_t;
         let read = unsafe { libc::read(signal_fd, buf.as_mut_ptr().cast(), len) };
         if read == -1 {
-            return Err(io::Error::last_os_error().into());
+            eprintln!("failed to read signal: {}", io::Error::last_os_error());
+            return Ok(());
         } else if read == 0 {
-            return Err("read 0 bytes from signal pipe...somehow".into());
+            eprintln!("read 0 bytes from signal buffer... somehow");
+            return Ok(());
         };
 
         let signal = buf[0] as i32;
